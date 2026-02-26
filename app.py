@@ -234,7 +234,9 @@ def hex_rgba(hex_color: str, alpha: float = 0.08) -> str:
 def get_tenure_group(hire_date, base_date):
     if pd.isna(hire_date):
         return "미입력"
-    days = (base_date - hire_date).days
+    hire = pd.Timestamp(hire_date).date() if not isinstance(hire_date, date) else hire_date
+    base = pd.Timestamp(base_date).date() if not isinstance(base_date, date) else base_date
+    days = (base - hire).days
     for threshold, label in TENURE_GROUPS:
         if days <= threshold:
             return label
@@ -1192,3 +1194,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
