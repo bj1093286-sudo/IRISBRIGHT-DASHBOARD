@@ -1,203 +1,302 @@
-# ═══════════════════════════════════════════════════════════════════
-#  Contact Center Operational Dashboard / Enterprise Edition v1.3
-# ═══════════════════════════════════════════════════════════════════
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import holidays as holidays_lib
+from datetime import datetime, timedelta, date
+import holidays
 
+# ─────────────────────────────────────────────
+# SHEET 설정
+# ─────────────────────────────────────────────
 SHEET_ID = "1dcAiu3SeFb4OU4xZaen8qfjqKf64GJtasXCK6t-OEvw"
-GID_MAP  = {
+GID_MAP = {
     "agent": "0",
     "phone": "754152852",
     "chat":  "1359982286",
     "board": "677677090",
 }
 
+# ─────────────────────────────────────────────
+# 상수
+# ─────────────────────────────────────────────
+WORK_START = 10
+WORK_END   = 18
+
+COLORS = {
+    "primary": "#6366f1",
+    "success": "#22c55e",
+    "danger":  "#ef4444",
+    "warning": "#f59e0b",
+    "info":    "#3b82f6",
+    "neutral": "#94a3b8",
+    "phone":   "#6366f1",
+    "chat":    "#22c55e",
+    "board":   "#f59e0b",
+}
+
+TENURE_GROUPS = [
+    (14,   "신입1 (2주이내)"),
+    (30,   "신입2 (1개월이내)"),
+    (60,   "신입3 (2개월이내)"),
+    (90,   "신입4 (3개월이내)"),
+    (180,  "신입5 (6개월이내)"),
+    (365,  "신입6 (1년이내)"),
+    (548,  "기존1 (1.5년이내)"),
+    (730,  "기존2 (2년이내)"),
+    (1095, "기존3 (3년이내)"),
+    (1460, "기존4 (4년이내)"),
+    (9999, "기존5 (4년초과)"),
+]
+
+MENU_GROUPS = {
+    "전체 현황":     ["전체 현황"],
+    "사업자":        ["사업자 현황"],
+    "전화":          ["전화 현황", "전화 상담사"],
+    "채팅":          ["채팅 현황", "채팅 상담사"],
+    "게시판":        ["게시판 현황", "게시판 상담사"],
+    "상담사":        ["상담사 종합"],
+}
+
+# ─────────────────────────────────────────────
+# 페이지 설정
+# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Contact Center OPS",
-    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# ─────────────────────────────────────────────
+# CSS — SaaS 디자인
+# ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-* { font-family:'Inter',sans-serif !important; }
-.stApp { background:#F5F6F8; }
-[data-testid="stSidebar"] {
-    background:linear-gradient(180deg,#1a1a2e 0%,#16213e 55%,#0f3460 100%) !important;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #F5F6F8 !important;
+    color: #0f172a;
 }
-[data-testid="stSidebar"] > div:first-child { padding:16px 14px 20px !important; }
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] .stMarkdown p { color:#dde3ee !important; font-size:12px !important; }
-.sb-group {
-    font-size:10px !important; font-weight:700 !important;
-    letter-spacing:1.2px !important; text-transform:uppercase !important;
-    color:#7a9cc6 !important; padding:10px 2px 4px !important; display:block !important;
+
+/* 사이드바 */
+section[data-testid="stSidebar"] {
+    background: #1e293b !important;
+    border-right: none !important;
+    width: 220px !important;
 }
-[data-testid="stSidebar"] .stButton > button {
-    width:100% !important; background:rgba(255,255,255,0.05) !important;
-    color:#ccd6f0 !important; border:1px solid rgba(255,255,255,0.08) !important;
-    border-radius:8px !important; padding:8px 12px !important; margin:2px 0 !important;
-    text-align:left !important; font-size:12px !important; font-weight:500 !important;
-    transition:all 0.18s ease !important;
+section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+section[data-testid="stSidebar"] .stButton > button {
+    background: #334155 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    color: #e2e8f0 !important;
+    width: 100% !important;
+    text-align: left !important;
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    margin-bottom: 2px !important;
+    transition: background 0.15s !important;
 }
-[data-testid="stSidebar"] .stButton > button:hover {
-    background:rgba(52,152,219,0.30) !important;
-    border-color:rgba(52,152,219,0.5) !important; color:#fff !important;
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: #6366f1 !important;
+    color: #fff !important;
 }
-[data-testid="stSidebar"] hr { border-color:rgba(255,255,255,0.10) !important; margin:8px 0 !important; }
+
+/* 메인 배경 */
+.main .block-container {
+    padding: 24px 32px !important;
+    max-width: 100% !important;
+    background: #F5F6F8 !important;
+}
+
+/* 헤더 */
+.dash-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding: 20px 28px;
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+.dash-header-left h1 {
+    font-size: 22px;
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+}
+.dash-header-left span {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 400;
+}
+.dash-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* 카드 */
+.card {
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    padding: 24px;
+    margin-bottom: 20px;
+}
+.card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 16px;
+    letter-spacing: -0.2px;
+}
+
+/* KPI 카드 */
+.kpi-grid {
+    display: grid;
+    gap: 16px;
+}
 .kpi-card {
-    background:#fff; border-radius:16px; padding:20px 24px;
-    box-shadow:0 2px 12px rgba(0,0,0,.06);
-    border-top:3px solid #3b82f6; margin-bottom:12px;
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    padding: 22px 24px;
 }
-.kpi-label { font-size:11px; color:#94a3b8; font-weight:600;
-             letter-spacing:0.6px; text-transform:uppercase; margin-bottom:6px; }
-.kpi-value { font-size:28px; font-weight:800; color:#0f172a; line-height:1.1; }
-.kpi-sub   { font-size:11px; color:#94a3b8; margin-top:4px; }
-.kpi-delta-up   { font-size:12px; font-weight:600; color:#ef4444; margin-top:4px; }
-.kpi-delta-down { font-size:12px; font-weight:600; color:#22c55e; margin-top:4px; }
-.kpi-delta-neu  { font-size:12px; font-weight:600; color:#94a3b8; margin-top:4px; }
+.kpi-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+.kpi-value {
+    font-size: 28px;
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -1px;
+    line-height: 1;
+    margin-bottom: 8px;
+}
+.kpi-delta-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.kpi-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 20px;
+}
+.kpi-delta.up   { background: #fef2f2; color: #ef4444; }
+.kpi-delta.down { background: #f0fdf4; color: #22c55e; }
+.kpi-delta.neu  { background: #f8fafc; color: #94a3b8; }
+.kpi-delta.up.rev   { background: #f0fdf4; color: #22c55e; }
+.kpi-delta.down.rev { background: #fef2f2; color: #ef4444; }
+
+/* 섹션 타이틀 */
 .section-title {
-    font-size:14px; font-weight:700; color:#0f172a;
-    margin:24px 0 12px; padding-bottom:8px;
-    border-bottom:2px solid #e2e8f0;
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 28px 0 14px;
+    letter-spacing: -0.3px;
 }
-.page-title { font-size:24px; font-weight:800; color:#0f172a; margin-bottom:2px; }
-.page-sub   { font-size:13px; color:#64748b; margin-bottom:20px; }
-.period-badge {
-    display:inline-block; background:#eff6ff; color:#3b82f6;
-    border-radius:6px; padding:2px 10px; font-size:11px;
-    font-weight:600; margin-left:8px;
-}
-#MainMenu{display:none;} footer{display:none;}
-::-webkit-scrollbar{width:5px;height:5px;}
-::-webkit-scrollbar-track{background:#F5F6F8;}
-::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px;}
+
+/* Streamlit 기본 요소 정리 */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+div[data-testid="stToolbar"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# CONSTANTS
+# 유틸 함수
 # ─────────────────────────────────────────────
-WORK_START = 10
-WORK_END   = 18
-COLORS = [
-    "#3b82f6","#22c55e","#f97316","#ef4444","#8b5cf6",
-    "#06b6d4","#eab308","#10b981","#f43f5e","#6366f1",
-    "#84cc16","#0ea5e9","#a855f7","#14b8a6","#f59e0b",
-]
-TENURE_GROUPS = [
-    (14,"신입1"),(30,"신입2"),(60,"신입3"),(90,"신입4"),
-    (180,"신입5"),(365,"신입6"),(548,"기존1"),(730,"기존2"),
-    (1095,"기존3"),(1460,"기존4"),(9999,"기존5"),
-]
-MENU_GROUPS = {
-    "Overview": ["전체 현황","사업자 현황"],
-    "Phone":    ["전화 현황","전화 상담사"],
-    "Chat":     ["채팅 현황","채팅 상담사"],
-    "Board":    ["게시판 현황","게시판 상담사"],
-    "Agent":    ["상담사 종합"],
-}
+def hex_rgba(hex_color: str, alpha: float = 0.08) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+def get_tenure_group(hire_date, base_date):
+    if pd.isna(hire_date):
+        return "미입력"
+    days = (base_date - hire_date).days
+    for threshold, label in TENURE_GROUPS:
+        if days <= threshold:
+            return label
+    return "기존5 (4년초과)"
+
+def is_holiday(d):
+    kr = holidays.KR(years=d.year)
+    return d in kr
+
+def is_workday(d):
+    return d.weekday() < 5 and not is_holiday(d)
+
+def split_leadtime(접수, 응답):
+    if pd.isna(접수) or pd.isna(응답):
+        return 0, 0
+    total_minutes = (응답 - 접수).total_seconds() / 60
+    work_min = 0
+    cur = 접수
+    while cur < 응답:
+        nxt = min(cur + timedelta(minutes=1), 응답)
+        if is_workday(cur.date()) and WORK_START <= cur.hour < WORK_END:
+            work_min += (nxt - cur).total_seconds() / 60
+        cur = nxt
+    return round(work_min, 1), round(total_minutes - work_min, 1)
+
+def gsheet_url(gid: str) -> str:
+    return (
+        f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+        f"/export?format=csv&gid={gid}"
+    )
 
 # ─────────────────────────────────────────────
-# PERIOD UTILITIES
+# 기간 유틸
 # ─────────────────────────────────────────────
 def get_period_col(unit):
-    return {"일별":"일자_d","주별":"주차","월별":"월"}.get(unit,"일자_d")
+    return {"일별": "일자", "주별": "주차", "월별": "월"}[unit]
 
-def assign_period_cols(df):
+def assign_period_cols(df, date_col="일자"):
+    if date_col not in df.columns:
+        return df
     df = df.copy()
-    df["일자_d"] = df["일자"].dt.strftime("%Y-%m-%d")
-    df["주차"]   = df["일자"].dt.to_period("W").apply(
-        lambda p: p.start_time.strftime("%Y-%m-%d"))
-    df["월"]     = df["일자"].dt.to_period("M").apply(
-        lambda p: p.strftime("%Y-%m"))
+    df["일자"] = pd.to_datetime(df[date_col], errors="coerce")
+    df["주차"] = df["일자"].dt.to_period("W").dt.start_time
+    df["월"]   = df["일자"].dt.to_period("M").dt.start_time
     return df
 
-def get_prev_period(unit, label):
-    try:
-        if unit=="일별":
-            return (datetime.strptime(str(label),"%Y-%m-%d")-timedelta(days=1)).strftime("%Y-%m-%d")
-        elif unit=="주별":
-            return (datetime.strptime(str(label),"%Y-%m-%d")-timedelta(weeks=1)).strftime("%Y-%m-%d")
-        elif unit=="월별":
-            d = datetime.strptime(str(label)+"-01","%Y-%m-%d")
-            return (d-timedelta(days=1)).strftime("%Y-%m")
-    except: return None
+def get_prev_period(unit, start, end):
+    delta = end - start + timedelta(days=1)
+    return start - delta, end - delta
 
-def get_yoy_period(unit, label):
-    try:
-        if unit in ["일별","주별"]:
-            return (datetime.strptime(str(label),"%Y-%m-%d")-timedelta(weeks=52)).strftime("%Y-%m-%d")
-        elif unit=="월별":
-            d = datetime.strptime(str(label)+"-01","%Y-%m-%d")
-            return d.replace(year=d.year-1).strftime("%Y-%m")
-    except: return None
-
-def get_chart_range(unit, month_range=3):
-    today = datetime.today()
-    if unit=="일별":   return today-timedelta(days=89)
-    elif unit=="주별": return today-timedelta(weeks=12)
-    elif unit=="월별":
-        r = today.replace(day=1)
-        for _ in range(month_range-1):
-            r = (r-timedelta(days=1)).replace(day=1)
-        return r
-    return today-timedelta(days=89)
-
-def calc_delta(curr, prev):
-    if prev is None or prev==0 or pd.isnull(prev): return None
-    return round((curr-prev)/abs(prev)*100,1)
+def get_chart_range(unit, end_date, month_range=3):
+    if unit == "일별":
+        return end_date - timedelta(days=89), end_date
+    elif unit == "주별":
+        return end_date - timedelta(weeks=12), end_date
+    else:
+        return end_date - timedelta(days=30 * month_range), end_date
 
 # ─────────────────────────────────────────────
-# TENURE / HOLIDAY / LEADTIME
+# 데이터 로드
 # ─────────────────────────────────────────────
-def get_tenure_group(hire_date, base_date):
-    if pd.isnull(hire_date): return "미입력"
-    days = (base_date-pd.Timestamp(hire_date)).days
-    for limit, label in TENURE_GROUPS:
-        if days <= limit: return label
-    return "기존5"
-
-def get_kr_holidays(years):
-    return set(holidays_lib.KR(years=years).keys())
-
-def fast_split_leadtime(start_dt, end_dt, holiday_set):
-    if pd.isnull(start_dt) or pd.isnull(end_dt): return 0.0,0.0
-    total_min = (end_dt-start_dt).total_seconds()/60
-    if total_min<=0: return 0.0,0.0
-    work_min = 0.0
-    cur = start_dt.replace(second=0, microsecond=0)
-    while cur < end_dt:
-        day      = cur.date()
-        next_day = datetime.combine(day+timedelta(days=1), datetime.min.time())
-        if cur.weekday()>=5 or day in holiday_set:
-            cur = min(next_day,end_dt); continue
-        ws = cur.replace(hour=WORK_START,minute=0,second=0)
-        we = cur.replace(hour=WORK_END,  minute=0,second=0)
-        if cur < ws:   cur = min(ws,end_dt);  continue
-        if cur < we:
-            seg = min(we,end_dt)
-            work_min += (seg-cur).total_seconds()/60
-            cur = seg; continue
-        cur = min(next_day,end_dt)
-    return round(max(work_min,0),1), round(max(total_min-work_min,0),1)
-
-# ─────────────────────────────────────────────
-# DATA LOADING
-# ─────────────────────────────────────────────
-def gsheet_url(gid):
-    return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}"
-
-@st.cache_data(ttl=300, show_spinner="에이전트 마스터 로딩...")
+@st.cache_data(ttl=300, show_spinner=False)
 def load_agent():
     try:
         df = pd.read_csv(gsheet_url(GID_MAP["agent"]))
@@ -205,1443 +304,891 @@ def load_agent():
         df["입사일"] = pd.to_datetime(df["입사일"], errors="coerce")
         return df
     except:
-        return pd.DataFrame(columns=["상담사명","팀명","입사일"])
+        return pd.DataFrame(columns=["상담사명", "팀명", "입사일"])
 
-@st.cache_data(ttl=300, show_spinner="전화 데이터 로딩...")
+@st.cache_data(ttl=300, show_spinner=False)
 def load_phone():
     try:
         df = pd.read_csv(gsheet_url(GID_MAP["phone"]))
         df.columns = df.columns.str.strip()
-        df["일자"]         = pd.to_datetime(df["일자"], errors="coerce")
-        df["인입시각_dt"]  = pd.to_datetime(
-            df["일자"].dt.strftime("%Y-%m-%d")+" "+df["인입시각"].astype(str),
-            errors="coerce")
-        df["대기시간(초)"]  = pd.to_numeric(df["대기시간(초)"],  errors="coerce").fillna(0)
-        df["통화시간(초)"]  = pd.to_numeric(df["통화시간(초)"],  errors="coerce").fillna(0)
-        df["ACW시간(초)"]   = pd.to_numeric(df["ACW시간(초)"],   errors="coerce").fillna(0)
-        df["AHT(초)"]       = df["통화시간(초)"] + df["ACW시간(초)"]
-        df["미응대"]        = df["상담사명"].str.strip() == "미응대"
-        df["인입시간대"]    = df["인입시각_dt"].dt.hour
-        for c in ["사업자명","브랜드","대분류","중분류","소분류"]:
-            if c in df.columns: df[c] = df[c].fillna("").astype(str)
-        return assign_period_cols(df)
-    except:
-        return pd.DataFrame(columns=[
-            "일자","사업자명","브랜드","상담사명","미응대","인입시각","인입시각_dt",
-            "인입시간대","대기시간(초)","통화시간(초)","ACW시간(초)","AHT(초)",
-            "대분류","중분류","소분류","일자_d","주차","월"])
+        df["일자"] = pd.to_datetime(df["일자"], errors="coerce")
+        df["인입시각"] = pd.to_datetime(df["일자"].astype(str) + " " + df["인입시각"].astype(str), errors="coerce")
+        df["통화시간(초)"] = pd.to_numeric(df.get("통화시간(초)", 0), errors="coerce").fillna(0)
+        df["ACW시간(초)"]  = pd.to_numeric(df.get("ACW시간(초)", 0), errors="coerce").fillna(0)
+        df["대기시간(초)"] = pd.to_numeric(df.get("대기시간(초)", 0), errors="coerce").fillna(0)
+        df["AHT(초)"]      = df["통화시간(초)"] + df["ACW시간(초)"]
+        df["응대여부"]     = df["상담사명"].apply(lambda x: "미응대" if str(x).strip() == "미응대" else "응대")
+        df["인입시간대"]   = df["인입시각"].dt.hour
+        df = assign_period_cols(df, "일자")
+        return df
+    except Exception as e:
+        return pd.DataFrame(columns=["일자","사업자명","브랜드","상담사명","인입시각","대기시간(초)","통화시간(초)","ACW시간(초)","대분류","중분류","소분류","AHT(초)","응대여부","인입시간대","주차","월"])
 
-@st.cache_data(ttl=300, show_spinner="채팅 데이터 로딩...")
+@st.cache_data(ttl=300, show_spinner=False)
 def load_chat():
     try:
         df = pd.read_csv(gsheet_url(GID_MAP["chat"]))
         df.columns = df.columns.str.strip()
-        df["일자"]           = pd.to_datetime(df["일자"], errors="coerce")
-        df["접수일시"]       = pd.to_datetime(df["접수일시"], errors="coerce")
+        df["일자"] = pd.to_datetime(df["일자"], errors="coerce")
+        df["접수일시"] = pd.to_datetime(df["접수일시"], errors="coerce")
         df["첫멘트발송일시"] = pd.to_datetime(df["첫멘트발송일시"], errors="coerce")
-        df["종료일시"]       = pd.to_datetime(df["종료일시"], errors="coerce")
-        df["배분전포기여부"] = df["배분전포기여부"].fillna("N").astype(str).str.upper()
-        df["미응대"]         = df["첫멘트발송일시"].isnull() | (df["배분전포기여부"]=="Y")
-        df["응답시간(초)"]   = (df["첫멘트발송일시"]-df["접수일시"]).dt.total_seconds().clip(lower=0).fillna(0)
-        df["리드타임(초)"]   = (df["종료일시"]-df["접수일시"]).dt.total_seconds().clip(lower=0).fillna(0)
-        df["인입시간대"]     = df["접수일시"].dt.hour
-        for c in ["사업자명","브랜드","플랫폼","대분류","중분류","소분류"]:
-            if c in df.columns: df[c] = df[c].fillna("").astype(str)
-        return assign_period_cols(df)
+        df["종료일시"] = pd.to_datetime(df["종료일시"], errors="coerce")
+        df["응답시간(초)"] = (df["첫멘트발송일시"] - df["접수일시"]).dt.total_seconds().clip(lower=0)
+        df["리드타임(초)"] = (df["종료일시"] - df["접수일시"]).dt.total_seconds().clip(lower=0)
+        포기여부 = df.get("배분전포기여부", pd.Series(["N"] * len(df)))
+        df["응대여부"] = df.apply(
+            lambda r: "미응대" if pd.isna(r["첫멘트발송일시"]) or str(포기여부.iloc[r.name]).strip().upper() == "Y"
+            else "응대", axis=1
+        )
+        df["인입시간대"] = df["접수일시"].dt.hour
+        df = assign_period_cols(df, "일자")
+        return df
     except:
-        return pd.DataFrame(columns=[
-            "일자","사업자명","브랜드","플랫폼","상담사명","미응대",
-            "접수일시","첫멘트발송일시","종료일시","배분전포기여부",
-            "응답시간(초)","리드타임(초)","인입시간대",
-            "대분류","중분류","소분류","일자_d","주차","월"])
+        return pd.DataFrame(columns=["일자","사업자명","브랜드","플랫폼","상담사명","접수일시","첫멘트발송일시","종료일시","배분전포기여부","대분류","중분류","소분류","응답시간(초)","리드타임(초)","응대여부","인입시간대","주차","월"])
 
-@st.cache_data(ttl=300, show_spinner="게시판 데이터 로딩...")
+@st.cache_data(ttl=300, show_spinner=False)
 def load_board():
     try:
         df = pd.read_csv(gsheet_url(GID_MAP["board"]))
         df.columns = df.columns.str.strip()
-        df["일자"]     = pd.to_datetime(df["일자"], errors="coerce")
+        df["일자"] = pd.to_datetime(df["일자"], errors="coerce")
         df["접수일시"] = pd.to_datetime(df["접수일시"], errors="coerce")
         df["응답일시"] = pd.to_datetime(df["응답일시"], errors="coerce")
-        df["미응대"]   = df["응답일시"].isnull()
-        # 리드타임 = 응답일시 - 접수일시
-        df["전체리드타임(분)"] = (
-            (df["응답일시"]-df["접수일시"]).dt.total_seconds()/60
-        ).clip(lower=0)
-        # 근무내/외 분리
-        years = set()
-        for d in pd.concat([df["접수일시"].dropna(), df["응답일시"].dropna()]):
-            years.add(d.year)
-        hset = get_kr_holidays(list(years)) if years else set()
-        wl, nwl = [], []
-        for _, row in df.iterrows():
-            if pd.isnull(row["응답일시"]):
-                wl.append(None); nwl.append(None)
-            else:
-                w, nw = fast_split_leadtime(row["접수일시"], row["응답일시"], hset)
-                wl.append(w); nwl.append(nw)
-        df["근무내리드타임(분)"]  = wl
-        df["근무외리드타임(분)"] = nwl
-        df["인입시간대"]          = df["접수일시"].dt.hour
-        for c in ["사업자명","브랜드","플랫폼","대분류","중분류","소분류"]:
-            if c in df.columns: df[c] = df[c].fillna("").astype(str)
-        return assign_period_cols(df)
+        df["리드타임(초)"] = (df["응답일시"] - df["접수일시"]).dt.total_seconds().clip(lower=0)
+        df["응대여부"] = df["응답일시"].apply(lambda x: "미응대" if pd.isna(x) else "응대")
+        df["인입시간대"] = df["접수일시"].dt.hour
+        df = assign_period_cols(df, "일자")
+        return df
     except:
-        return pd.DataFrame(columns=[
-            "일자","사업자명","브랜드","플랫폼","상담사명","미응대",
-            "접수일시","응답일시","전체리드타임(분)",
-            "근무내리드타임(분)","근무외리드타임(분)","인입시간대",
-            "대분류","중분류","소분류","일자_d","주차","월"])
+        return pd.DataFrame(columns=["일자","사업자명","브랜드","플랫폼","상담사명","접수일시","응답일시","대분류","중분류","소분류","리드타임(초)","응대여부","인입시간대","주차","월"])
 
 def merge_agent(df, agent_df, base_date):
-    m = df.merge(agent_df, on="상담사명", how="left")
-    m["팀명"]     = m["팀명"].fillna("미입력")
-    m["입사일"]   = pd.to_datetime(m["입사일"], errors="coerce")
-    m["근속그룹"] = m["입사일"].apply(lambda x: get_tenure_group(x, base_date))
-    return m
-
-# ─────────────────────────────────────────────
-# UTILITIES
-# ─────────────────────────────────────────────
-def filter_df(df, dr, brands, biz_names):
-    if len(df)==0: return df
-    m = (df["일자"]>=pd.Timestamp(dr[0])) & (df["일자"]<=pd.Timestamp(dr[1]))
-    if brands:    m &= df["브랜드"].isin(brands)
-    if biz_names and "사업자명" in df.columns:
-        m &= df["사업자명"].isin(biz_names)
-    return df[m].copy()
-
-def sec(title):
-    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
-
-def kpi(label, value, sub="", delta=None,
-        delta_label="전기대비", reverse=False, color="#3b82f6"):
-    dh = ""
-    if delta is not None:
-        if delta>0:
-            cls = "kpi-delta-down" if reverse else "kpi-delta-up"
-            dh  = f'<div class="{cls}">▲ {abs(delta):.1f}% ({delta_label})</div>'
-        elif delta<0:
-            cls = "kpi-delta-up" if reverse else "kpi-delta-down"
-            dh  = f'<div class="{cls}">▼ {abs(delta):.1f}% ({delta_label})</div>'
-        else:
-            dh  = '<div class="kpi-delta-neu">- 변동없음</div>'
-    sh = f'<div class="kpi-sub">{sub}</div>' if sub else ""
-    st.markdown(f"""
-    <div class="kpi-card" style="border-top-color:{color}">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}</div>{sh}{dh}
-    </div>""", unsafe_allow_html=True)
-
-def fmt_sec(s):
-    if pd.isnull(s) or s==0: return "0s"
-    s=int(s); m,sec=divmod(s,60)
-    return f"{m}m {sec}s" if m else f"{sec}s"
-
-def fmt_min(m):
-    if pd.isnull(m) or m==0: return "0m"
-    m=float(m); h,mn=divmod(int(m),60)
-    return f"{h}h {mn}m" if h else f"{mn}m"
-
-def chart_cfg(fig, h=320):
-    fig.update_layout(
-        height=h, margin=dict(t=10,b=40,l=0,r=10),
-        legend=dict(orientation="h",yanchor="bottom",y=1.02,
-                    xanchor="right",x=1,font=dict(size=11)),
-        font=dict(size=11,family="Inter"),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    if agent_df.empty or "상담사명" not in df.columns:
+        df["팀명"] = "미지정"
+        df["근속그룹"] = "미입력"
+        return df
+    merged = df.merge(agent_df[["상담사명", "팀명", "입사일"]], on="상담사명", how="left")
+    merged["팀명"] = merged["팀명"].fillna("미지정")
+    merged["근속그룹"] = merged["입사일"].apply(
+        lambda x: get_tenure_group(x, base_date)
     )
-    fig.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0",tickfont=dict(size=10))
-    fig.update_yaxes(showgrid=True,gridcolor="#f1f5f9",tickfont=dict(size=10))
+    return merged
+
+# ─────────────────────────────────────────────
+# 필터
+# ─────────────────────────────────────────────
+def filter_df(df, start, end, brands=None, operators=None):
+    if df.empty:
+        return df
+    date_col = "일자"
+    if date_col not in df.columns:
+        return df
+    mask = (df[date_col] >= pd.Timestamp(start)) & (df[date_col] <= pd.Timestamp(end))
+    df = df[mask].copy()
+    if brands and "브랜드" in df.columns:
+        df = df[df["브랜드"].isin(brands)]
+    if operators and "사업자명" in df.columns:
+        df = df[df["사업자명"].isin(operators)]
+    return df
+
+# ─────────────────────────────────────────────
+# KPI 렌더
+# ─────────────────────────────────────────────
+def kpi_card(label, value, delta_curr=None, delta_yoy=None, reverse=False, unit=""):
+    def badge(val, rev):
+        if val is None:
+            return ""
+        sign = "▲" if val > 0 else ("▼" if val < 0 else "—")
+        direction = "up" if val > 0 else ("down" if val < 0 else "neu")
+        rev_cls = " rev" if rev else ""
+        return f'<span class="kpi-delta {direction}{rev_cls}">{sign} {abs(val):.1f}%</span>'
+
+    delta_html = ""
+    if delta_curr is not None:
+        delta_html += badge(delta_curr, reverse)
+    if delta_yoy is not None:
+        delta_html += f'<span style="font-size:10px;color:#94a3b8;margin-left:4px;">YoY</span>' + badge(delta_yoy, reverse)
+
+    return f"""
+    <div class="kpi-card">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-value">{value}<span style="font-size:14px;color:#94a3b8;margin-left:4px;">{unit}</span></div>
+        <div class="kpi-delta-row">{delta_html}</div>
+    </div>
+    """
+
+def calc_delta(curr, prev):
+    if prev is None or prev == 0:
+        return None
+    return round((curr - prev) / prev * 100, 1)
+
+# ─────────────────────────────────────────────
+# 차트 공통 설정
+# ─────────────────────────────────────────────
+def base_layout(h=320, title=""):
+    return dict(
+        height=h,
+        title=dict(text=title, font=dict(size=13, color="#0f172a", family="Inter"), x=0),
+        margin=dict(l=8, r=8, t=36 if title else 12, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter", size=11, color="#64748b"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    font=dict(size=11)),
+        xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(size=10)),
+        yaxis=dict(showgrid=True, gridcolor="#f1f5f9", zeroline=False, tickfont=dict(size=10)),
+    )
+
+def trend_chart(series_dict, unit, y_label="건수", h=320, month_range=3, title=""):
+    """series_dict = {"라벨": df_with_period_and_y_label_col}"""
+    pc = get_period_col(unit)
+    fig = go.Figure()
+    palette = [COLORS["primary"], COLORS["success"], COLORS["warning"], COLORS["info"], COLORS["danger"]]
+    for i, (name, s) in enumerate(series_dict.items()):
+        if s.empty or pc not in s.columns or y_label not in s.columns:
+            continue
+        color = palette[i % len(palette)]
+        fig.add_trace(go.Scatter(
+            x=s[pc], y=s[y_label],
+            mode="lines+markers",
+            name=name,
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            fill="tozeroy",
+            fillcolor=hex_rgba(color, 0.07),
+        ))
+    layout = base_layout(h, title)
+    fig.update_layout(**layout)
     return fig
 
-def make_color_map(keys):
-    return {k:COLORS[i%len(COLORS)] for i,k in enumerate(sorted(keys))}
+def donut_chart(labels, values, colors=None, h=260, title=""):
+    if colors is None:
+        colors = [COLORS["primary"], COLORS["success"], COLORS["warning"], COLORS["info"], COLORS["danger"]]
+    total = sum(values) if values else 0
+    fig = go.Figure(go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.62,
+        marker=dict(colors=colors[:len(labels)], line=dict(color="#fff", width=3)),
+        textinfo="none",
+        hovertemplate="%{label}: %{value:,}건 (%{percent})<extra></extra>",
+    ))
+    fig.update_layout(
+        **base_layout(h, title),
+        annotations=[dict(
+            text=f"<b>{total:,}</b>",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=18, color="#0f172a", family="Inter"),
+        )],
+        legend=dict(
+            orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02,
+            font=dict(size=11),
+        ),
+    )
+    return fig
 
-def compact_table(data, height=280):
-    st.dataframe(data, use_container_width=True, height=height)
+def bar_chart(df, x, y, color=None, h=300, title="", orientation="v"):
+    fig = px.bar(df, x=x, y=y, color=color, barmode="group",
+                 color_discrete_sequence=[COLORS["primary"], COLORS["success"], COLORS["warning"]],
+                 orientation=orientation)
+    fig.update_traces(marker_line_width=0)
+    fig.update_layout(**base_layout(h, title))
+    return fig
 
-def response_rate(df):
-    if len(df)==0: return 0.0
-    return round((~df["미응대"]).sum()/len(df)*100,1)
+def heatmap_chart(df_pivot, h=320, title=""):
+    fig = go.Figure(go.Heatmap(
+        z=df_pivot.values,
+        x=df_pivot.columns.astype(str),
+        y=df_pivot.index.astype(str),
+        colorscale=[[0, "#f8fafc"], [0.5, "#818cf8"], [1, "#4338ca"]],
+        showscale=True,
+        hovertemplate="시간대: %{x}시<br>날짜: %{y}<br>건수: %{z}<extra></extra>",
+    ))
+    fig.update_layout(**base_layout(h, title))
+    return fig
 
-def get_period_kpi(df, unit, val_col=None, agg="count", responded_only=False):
-    tdf = df[~df["미응대"]].copy() if responded_only else df.copy()
-    if len(tdf)==0: return 0,None,None,"-"
+# ─────────────────────────────────────────────
+# 공통 섹션 렌더 헬퍼
+# ─────────────────────────────────────────────
+def render_card(title, content_fn):
+    st.markdown(f'<div class="card"><div class="card-title">{title}</div>', unsafe_allow_html=True)
+    content_fn()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def fmt_sec(sec):
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}s"
+    elif sec < 3600:
+        return f"{sec//60}m {sec%60:02d}s"
+    else:
+        return f"{sec//3600}h {(sec%3600)//60:02d}m"
+
+def fmt_pct(val):
+    return f"{val:.1f}%"
+
+# ─────────────────────────────────────────────
+# 전체 현황 페이지
+# ─────────────────────────────────────────────
+def page_overview(phone, chat, board, unit, month_range, start, end):
+    updated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    st.markdown(f"""
+    <div class="dash-header">
+        <div class="dash-header-left">
+            <h1>Contact Center Dashboard</h1>
+            <span>Updated {updated}</span>
+        </div>
+        <div class="dash-header-right">
+            <span style="font-size:12px;color:#64748b;background:#f1f5f9;padding:6px 14px;border-radius:20px;font-weight:600;">
+                {start.strftime("%Y.%m.%d")} ~ {end.strftime("%Y.%m.%d")}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    total_phone  = len(phone)
+    total_chat   = len(chat)
+    total_board  = len(board)
+    total_all    = total_phone + total_chat + total_board
+
+    resp_phone = len(phone[phone["응대여부"] == "응대"]) if not phone.empty else 0
+    resp_chat  = len(chat[chat["응대여부"] == "응대"]) if not chat.empty else 0
+    resp_board = len(board[board["응대여부"] == "응대"]) if not board.empty else 0
+
+    rr_phone = resp_phone / total_phone * 100 if total_phone else 0
+    rr_chat  = resp_chat  / total_chat  * 100 if total_chat  else 0
+    rr_board = resp_board / total_board * 100 if total_board else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(kpi_card("전체 인입", f"{total_all:,}", unit="건"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(kpi_card("전화 인입", f"{total_phone:,}", unit="건"), unsafe_allow_html=True)
+    with c3:
+        st.markdown(kpi_card("채팅 인입", f"{total_chat:,}", unit="건"), unsafe_allow_html=True)
+    with c4:
+        st.markdown(kpi_card("게시판 인입", f"{total_board:,}", unit="건"), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">채널별 응대율</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(kpi_card("전화 응대율", fmt_pct(rr_phone)), unsafe_allow_html=True)
+    with c2:
+        st.markdown(kpi_card("채팅 응대율", fmt_pct(rr_chat)), unsafe_allow_html=True)
+    with c3:
+        st.markdown(kpi_card("게시판 응대율", fmt_pct(rr_board)), unsafe_allow_html=True)
+
+    # 채널 분포 도넛
+    st.markdown('<div class="section-title">채널별 인입 분포</div>', unsafe_allow_html=True)
+    col_d, col_t = st.columns([1, 2])
+    with col_d:
+        fig = donut_chart(
+            ["전화", "채팅", "게시판"],
+            [total_phone, total_chat, total_board],
+            [COLORS["phone"], COLORS["chat"], COLORS["board"]],
+            title="채널 분포"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 추이 차트
+    with col_t:
+        pc = get_period_col(unit)
+        cr_s, cr_e = get_chart_range(unit, end, month_range)
+
+        def agg_series(df, col="일자"):
+            if df.empty or pc not in df.columns:
+                return pd.DataFrame(columns=[pc, "건수"])
+            s = df[df[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
+            return s
+
+        ph_s = agg_series(phone)
+        ch_s = agg_series(chat)
+        bo_s = agg_series(board)
+
+        fig2 = trend_chart({"전화": ph_s, "채팅": ch_s, "게시판": bo_s},
+                           unit=unit, y_label="건수", title="채널별 인입 추이")
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ─────────────────────────────────────────────
+# 사업자 현황 페이지
+# ─────────────────────────────────────────────
+def page_operator(phone, chat, board, unit, month_range):
+    st.markdown('<div class="section-title">사업자별 인입 현황</div>', unsafe_allow_html=True)
+
+    def op_summary(df, ch_name):
+        if df.empty or "사업자명" not in df.columns:
+            return pd.DataFrame()
+        g = df.groupby("사업자명").agg(
+            인입=("사업자명", "count"),
+            응대=("응대여부", lambda x: (x == "응대").sum()),
+        ).reset_index()
+        g["응대율"] = (g["응대"] / g["인입"] * 100).round(1)
+        g["채널"] = ch_name
+        return g
+
+    ph_op = op_summary(phone, "전화")
+    ch_op = op_summary(chat, "채팅")
+    bo_op = op_summary(board, "게시판")
+    all_op = pd.concat([ph_op, ch_op, bo_op])
+
+    if all_op.empty:
+        st.info("사업자명 데이터가 없습니다.")
+        return
+
+    fig = px.bar(all_op, x="사업자명", y="인입", color="채널", barmode="stack",
+                 color_discrete_map={"전화": COLORS["phone"], "채팅": COLORS["chat"], "게시판": COLORS["board"]})
+    fig.update_layout(**base_layout(360, "사업자별 채널 인입"))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 사업자별 응대율 테이블
+    pivot = all_op.pivot_table(index="사업자명", columns="채널", values=["인입", "응대율"], aggfunc="first")
+    st.dataframe(pivot, use_container_width=True)
+
+# ─────────────────────────────────────────────
+# 전화 현황 페이지
+# ─────────────────────────────────────────────
+def page_phone(phone, unit, month_range, start, end):
+    if phone.empty:
+        st.info("전화 데이터가 없습니다.")
+        return
+
+    responded = phone[phone["응대여부"] == "응대"]
+    total     = len(phone)
+    resp_cnt  = len(responded)
+    rr        = resp_cnt / total * 100 if total else 0
+    avg_wait  = responded["대기시간(초)"].mean() if not responded.empty else 0
+    avg_talk  = responded["통화시간(초)"].mean() if not responded.empty else 0
+    avg_acw   = responded["ACW시간(초)"].mean()  if not responded.empty else 0
+    avg_aht   = responded["AHT(초)"].mean()      if not responded.empty else 0
+
+    # KPI 행
+    cols = st.columns(6)
+    kpis = [
+        ("전체 인입", f"{total:,}", "건"),
+        ("응대", f"{resp_cnt:,}", "건"),
+        ("응대율", fmt_pct(rr), ""),
+        ("평균 대기시간", fmt_sec(avg_wait), ""),
+        ("평균 통화시간", fmt_sec(avg_talk), ""),
+        ("평균 AHT", fmt_sec(avg_aht), ""),
+    ]
+    for col, (label, val, u) in zip(cols, kpis):
+        with col:
+            st.markdown(kpi_card(label, val, unit=u), unsafe_allow_html=True)
+
+    # 추이 + 도넛
+    st.markdown('<div class="section-title">인입/응대 추이</div>', unsafe_allow_html=True)
     pc = get_period_col(unit)
-    if pc not in tdf.columns: return 0,None,None,"-"
-    series = (tdf.groupby(pc)[val_col].agg(agg)
-              if val_col and agg!="count"
-              else tdf.groupby(pc).size())
-    if series.empty: return 0,None,None,"-"
-    series    = series.sort_index()
-    cur_label = series.index[-1]
-    cur_val   = series.iloc[-1]
-    prev_val  = series.get(get_prev_period(unit,cur_label), None)
-    yoy_val   = series.get(get_yoy_period(unit,cur_label),  None)
-    return cur_val, prev_val, yoy_val, cur_label
+    cr_s, cr_e = get_chart_range(unit, end, month_range)
 
-def delta_row(cur, prev, yoy, unit, reverse=False):
-    unit_map = {"일별":"전일","주별":"전주","월별":"전월"}
-    prev_lbl = unit_map.get(unit,"전기")
-    def badge(val, lbl, rev):
-        if val is None or pd.isnull(val): return ""
-        if val>0:
-            cls = "kpi-delta-down" if rev else "kpi-delta-up"
-            return f'<span class="{cls}">▲{abs(val):.1f}% ({lbl})</span>'
-        elif val<0:
-            cls = "kpi-delta-up" if rev else "kpi-delta-down"
-            return f'<span class="{cls}">▼{abs(val):.1f}% ({lbl})</span>'
-        return f'<span class="kpi-delta-neu">- ({lbl})</span>'
-    p_d = calc_delta(cur,prev)
-    y_d = calc_delta(cur,yoy)
-    return " &nbsp; ".join(
-        p for p in [badge(p_d,prev_lbl,reverse),badge(y_d,"전년동기",reverse)] if p)
+    ph_in = phone[phone[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
+    ph_re = responded[responded[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
 
-def trend_chart(df_dict, unit, val_col=None, agg="count",
-                responded_only=False, y_label="건수", h=320, month_range=3):
-    cutoff = get_chart_range(unit, month_range)
-    pc     = get_period_col(unit)
-    fig    = go.Figure()
-    cmap   = make_color_map(list(df_dict.keys()))
-    for name, df in df_dict.items():
-        if len(df)==0: continue
-        tdf = df[~df["미응대"]].copy() if responded_only else df.copy()
-        tdf = tdf[tdf["일자"]>=pd.Timestamp(cutoff)]
-        if len(tdf)==0 or pc not in tdf.columns: continue
-        s = (tdf.groupby(pc)[val_col].agg(agg).round(1)
-             if val_col and agg!="count"
-             else tdf.groupby(pc).size())
-        s = s.sort_index().reset_index()
-        s.columns = [pc, y_label]
-        color = cmap.get(name,"#888")
-        fig.add_trace(go.Scatter(
-            x=s[pc], y=s[y_label], mode="lines+markers", name=name,
-            line=dict(color=color,width=2.5), marker=dict(size=7),
-            fill="tozeroy", fillcolor=color+"18",
-        ))
-    if not fig.data:
-        st.info("표시할 데이터가 없습니다."); return
-    fig.update_layout(
-        height=h, hovermode="x unified",
-        margin=dict(t=10,b=40,l=0,r=10),
-        legend=dict(orientation="h",yanchor="bottom",y=1.02,
-                    xanchor="right",x=1,font=dict(size=11)),
-        yaxis_title=y_label,
-        font=dict(size=11,family="Inter"),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-    )
-    fig.update_xaxes(showgrid=False,showline=True,
-                     linecolor="#e2e8f0",tickangle=-30,tickfont=dict(size=10))
-    fig.update_yaxes(showgrid=True,gridcolor="#f1f5f9",tickfont=dict(size=10))
-    st.plotly_chart(fig, use_container_width=True)
+    col_t, col_d = st.columns([2, 1])
+    with col_t:
+        fig = trend_chart({"전화 인입": ph_in, "응대": ph_re},
+                          unit=unit, y_label="건수", h=320, month_range=month_range,
+                          title="인입 / 응대 추이")
+        st.plotly_chart(fig, use_container_width=True)
+    with col_d:
+        fig2 = donut_chart(["응대", "미응대"], [resp_cnt, total - resp_cnt],
+                           [COLORS["success"], COLORS["danger"]], title="응대 현황")
+        st.plotly_chart(fig2, use_container_width=True)
 
-def bar_trend_chart(df_dict, unit, y_label="건수", h=300, month_range=3):
-    cutoff = get_chart_range(unit, month_range)
-    pc     = get_period_col(unit)
-    rows   = []
-    for name, df in df_dict.items():
-        if len(df)==0: continue
-        tdf = df[df["일자"]>=pd.Timestamp(cutoff)]
-        if pc not in tdf.columns: continue
-        s = tdf.groupby(pc).size().sort_index().reset_index()
-        s.columns = [pc, y_label]
-        s["채널"] = name
-        rows.append(s)
-    if not rows:
-        st.info("표시할 데이터가 없습니다."); return
-    mlt  = pd.concat(rows)
-    cmap = make_color_map(list(df_dict.keys()))
-    fig  = px.bar(mlt,x=pc,y=y_label,color="채널",
-                  barmode="stack",color_discrete_map=cmap)
-    chart_cfg(fig,h=h)
-    st.plotly_chart(fig, use_container_width=True)
+    # 시간대별 인입
+    st.markdown('<div class="section-title">시간대별 인입 현황</div>', unsafe_allow_html=True)
+    hourly = phone.groupby("인입시간대").agg(
+        인입=("인입시간대", "count"),
+        응대=("응대여부", lambda x: (x == "응대").sum()),
+    ).reset_index()
+    hourly["응대율"] = (hourly["응대"] / hourly["인입"] * 100).round(1)
 
-# 시간대별 인입/응대 현황 공통 함수
-def hourly_inbound_chart(df, title="시간대별 인입/응대 현황"):
-    sec(title)
-    if "인입시간대" not in df.columns or len(df)==0:
-        st.info("시간대 데이터가 없습니다."); return
-    hour_d = df.groupby(["인입시간대","미응대"]).size().reset_index(name="건수")
-    hour_d["구분"] = hour_d["미응대"].map({True:"미응대",False:"응대"})
-    fig = px.bar(hour_d, x="인입시간대", y="건수", color="구분",
-                 barmode="stack",
-                 color_discrete_map={"응대":"#3b82f6","미응대":"#ef4444"})
-    fig.update_layout(
-        height=300, xaxis=dict(dtick=1),
-        margin=dict(t=10,b=40,l=0,r=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-        font=dict(size=11),
-    )
-    fig.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0")
-    fig.update_yaxes(showgrid=True,gridcolor="#f1f5f9")
-    st.plotly_chart(fig, use_container_width=True)
+    fig3 = go.Figure()
+    fig3.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["인입"],
+                          name="인입", marker_color=hex_rgba(COLORS["primary"], 0.7)))
+    fig3.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["응대"],
+                          name="응대", marker_color=COLORS["primary"]))
+    fig3.update_layout(**base_layout(300, "시간대별 인입 / 응대"))
+    st.plotly_chart(fig3, use_container_width=True)
 
-    # 응답률 라인 추가
-    sec("시간대별 응답률")
-    rr = (df.groupby("인입시간대")
-          .apply(lambda g: round((~g["미응대"]).sum()/len(g)*100,1) if len(g)>0 else 0)
-          .reset_index())
-    rr.columns = ["인입시간대","응답률(%)"]
-    fig2 = px.line(rr, x="인입시간대", y="응답률(%)",
-                   markers=True,
-                   color_discrete_sequence=["#22c55e"])
-    fig2.update_traces(line=dict(width=2.5), marker=dict(size=8))
-    fig2.update_layout(
-        height=240, yaxis=dict(range=[0,105]),
-        margin=dict(t=10,b=40,l=0,r=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(size=11),
-    )
-    fig2.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0",dtick=1)
-    fig2.update_yaxes(showgrid=True,gridcolor="#f1f5f9")
-    st.plotly_chart(fig2, use_container_width=True)
+    # AHT 구성
+    st.markdown('<div class="section-title">AHT 구성 분석</div>', unsafe_allow_html=True)
+    if not responded.empty:
+        aht_df = responded.groupby(pc).agg(
+            통화시간=("통화시간(초)", "mean"),
+            ACW시간=("ACW시간(초)", "mean"),
+        ).reset_index()
+        fig4 = go.Figure()
+        fig4.add_trace(go.Bar(x=aht_df[pc], y=aht_df["통화시간"],
+                              name="통화시간", marker_color=COLORS["primary"]))
+        fig4.add_trace(go.Bar(x=aht_df[pc], y=aht_df["ACW시간"],
+                              name="ACW", marker_color=COLORS["warning"]))
+        fig4.update_layout(barmode="stack", **base_layout(300, "기간별 평균 AHT 구성"))
+        st.plotly_chart(fig4, use_container_width=True)
 
-# ─────────────────────────────────────────────
-# PAGE — 전체 현황
-# ─────────────────────────────────────────────
-def page_overview(phone, chat, board, unit, month_range):
-    st.markdown('<div class="page-title">전체 현황</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">전체 채널 통합 운영 현황'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+    # 대분류별 인입
+    st.markdown('<div class="section-title">문의 유형 분석</div>', unsafe_allow_html=True)
+    if "대분류" in phone.columns:
+        cat_df = phone.groupby("대분류").size().reset_index(name="건수").sort_values("건수", ascending=False)
+        fig5 = px.bar(cat_df, x="대분류", y="건수",
+                      color_discrete_sequence=[COLORS["primary"]])
+        fig5.update_layout(**base_layout(300, "대분류별 인입"))
+        st.plotly_chart(fig5, use_container_width=True)
 
-    ph_cur,ph_prev,ph_yoy,_ = get_period_kpi(phone,unit)
-    ch_cur,ch_prev,ch_yoy,_ = get_period_kpi(chat, unit)
-    bo_cur,bo_prev,bo_yoy,_ = get_period_kpi(board,unit)
-    prev_lbl = {"일별":"전일","주별":"전주","월별":"전월"}.get(unit,"전기")
-
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: kpi("전체 인입",
-                 f"{len(phone)+len(chat)+len(board):,}건",
-                 sub=f"전화 {len(phone):,} / 채팅 {len(chat):,} / 게시판 {len(board):,}")
-    with c2: kpi("전화 인입",   f"{int(ph_cur):,}건",
-                 delta=calc_delta(ph_cur,ph_prev), delta_label=prev_lbl, color="#3b82f6")
-    with c3: kpi("채팅 인입",   f"{int(ch_cur):,}건",
-                 delta=calc_delta(ch_cur,ch_prev), delta_label=prev_lbl, color="#22c55e")
-    with c4: kpi("게시판 인입", f"{int(bo_cur):,}건",
-                 delta=calc_delta(bo_cur,bo_prev), delta_label=prev_lbl, color="#f97316")
-
-    yoy_parts = []
-    for label,cur,yoy in [("전화",ph_cur,ph_yoy),("채팅",ch_cur,ch_yoy),("게시판",bo_cur,bo_yoy)]:
-        b = delta_row(cur,None,yoy,unit)
-        if b: yoy_parts.append(f"{label} {b}")
-    if yoy_parts:
-        st.markdown(
-            f"<div style='font-size:12px;margin-bottom:12px'>"
-            f"{'&nbsp;&nbsp;|&nbsp;&nbsp;'.join(yoy_parts)}</div>",
-            unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    sec(f"채널별 인입 추이 ({unit})")
-    trend_chart({"전화":phone,"채팅":chat,"게시판":board},
-                unit=unit, y_label="건수", h=340, month_range=month_range)
-
-    sec(f"채널별 누적 인입 ({unit})")
-    bar_trend_chart({"전화":phone,"채팅":chat,"게시판":board},
-                    unit=unit, y_label="건수", h=280, month_range=month_range)
-
-    sec(f"채널별 응답률 추이 ({unit})")
-    cutoff = get_chart_range(unit, month_range)
-    pc     = get_period_col(unit)
-    rr_rows = []
-    for name, df in [("전화",phone),("채팅",chat),("게시판",board)]:
-        if len(df)==0: continue
-        tdf = df[df["일자"]>=pd.Timestamp(cutoff)]
-        if pc not in tdf.columns: continue
-        grp = (tdf.groupby(pc)
-               .apply(lambda g: round((~g["미응대"]).sum()/len(g)*100,1) if len(g)>0 else 0)
-               .reset_index())
-        grp.columns = [pc,"응답률(%)"]
-        grp["채널"] = name
-        rr_rows.append(grp)
-    if rr_rows:
-        rr_df = pd.concat(rr_rows)
-        cmap  = {"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"}
-        fig_rr = go.Figure()
-        for ch in ["전화","채팅","게시판"]:
-            d = rr_df[rr_df["채널"]==ch]
-            if len(d)==0: continue
-            fig_rr.add_trace(go.Scatter(
-                x=d[pc],y=d["응답률(%)"],mode="lines+markers",name=ch,
-                line=dict(color=cmap[ch],width=2.5),marker=dict(size=7)))
-        fig_rr.update_layout(
-            height=300, hovermode="x unified",
-            yaxis=dict(title="응답률(%)",range=[0,105]),
-            margin=dict(t=10,b=40,l=0,r=10),
-            legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(size=11))
-        fig_rr.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0",tickangle=-30)
-        fig_rr.update_yaxes(showgrid=True,gridcolor="#f1f5f9")
-        st.plotly_chart(fig_rr, use_container_width=True)
-
-    # 전체 시간대별 인입
-    sec("전체 채널 시간대별 인입/응대 현황")
-    all_df = pd.concat([
-        phone.assign(채널="전화") if len(phone)>0 else pd.DataFrame(),
-        chat.assign(채널="채팅")  if len(chat)>0  else pd.DataFrame(),
-        board.assign(채널="게시판") if len(board)>0 else pd.DataFrame(),
-    ])
-    if len(all_df)>0 and "인입시간대" in all_df.columns:
-        hour_all = all_df.groupby(["인입시간대","채널"]).size().reset_index(name="건수")
-        fig_h = px.bar(hour_all, x="인입시간대", y="건수", color="채널",
-                       barmode="stack",
-                       color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"})
-        fig_h.update_layout(
-            height=300, xaxis=dict(dtick=1),
-            margin=dict(t=10,b=40,l=0,r=10),
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-            font=dict(size=11))
-        fig_h.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0")
-        fig_h.update_yaxes(showgrid=True,gridcolor="#f1f5f9")
-        st.plotly_chart(fig_h, use_container_width=True)
-
-# ─────────────────────────────────────────────
-# PAGE — 사업자 현황
-# ─────────────────────────────────────────────
-def page_biz(phone, chat, board, unit, month_range):
-    st.markdown('<div class="page-title">사업자 현황</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">사업자별 채널 통합 운영 현황'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
-
-    all_df = pd.concat([
-        phone.assign(채널="전화")   if len(phone)>0 else pd.DataFrame(),
-        chat.assign(채널="채팅")    if len(chat)>0  else pd.DataFrame(),
-        board.assign(채널="게시판") if len(board)>0 else pd.DataFrame(),
-    ])
-    if len(all_df)==0:
-        st.info("데이터가 없습니다."); return
-
-    t1,t2,t3,t4 = st.tabs(["인입 현황","응답률","채널 분포","브랜드 드릴다운"])
-
-    with t1:
-        sec("사업자별 전체 인입")
-        biz_total = (all_df.groupby("사업자명").size()
-                     .reset_index(name="건수")
-                     .sort_values("건수",ascending=False))
-        col1,col2 = st.columns([1,1])
-        with col1:
-            fig = px.pie(biz_total,names="사업자명",values="건수",hole=0.6,
-                         color_discrete_sequence=COLORS)
-            fig.update_traces(textposition="inside",textinfo="percent+label",textfont_size=11)
-            fig.update_layout(height=320,margin=dict(t=0,b=0,l=0,r=0),
-                              plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            fig2 = px.bar(biz_total,y="사업자명",x="건수",orientation="h",
-                          color="사업자명",color_discrete_sequence=COLORS,text="건수")
-            fig2.update_traces(textposition="outside",textfont_size=10)
-            fig2.update_layout(height=320,showlegend=False,
-                               margin=dict(t=10,b=10,l=0,r=60),
-                               plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                               font=dict(size=11))
-            st.plotly_chart(fig2, use_container_width=True)
-
-        sec(f"사업자별 인입 추이 ({unit})")
-        cutoff   = get_chart_range(unit, month_range)
-        pc       = get_period_col(unit)
-        biz_list = biz_total["사업자명"].tolist()
-        fig3     = go.Figure()
-        cmap     = make_color_map(biz_list)
-        for biz in biz_list:
-            sub = all_df[(all_df["사업자명"]==biz)&(all_df["일자"]>=pd.Timestamp(cutoff))]
-            if pc not in sub.columns or len(sub)==0: continue
-            s = sub.groupby(pc).size().sort_index().reset_index()
-            s.columns = [pc,"건수"]
-            fig3.add_trace(go.Scatter(
-                x=s[pc],y=s["건수"],mode="lines+markers",name=biz,
-                line=dict(color=cmap.get(biz,"#888"),width=2.5),marker=dict(size=7)))
-        chart_cfg(fig3,h=320)
-        fig3.update_layout(hovermode="x unified")
-        st.plotly_chart(fig3, use_container_width=True)
-        with st.expander("수치 테이블",expanded=False):
-            compact_table(biz_total, height=260)
-
-    with t2:
-        sec("사업자별 채널별 응답률")
-        rr_rows = []
-        for biz in all_df["사업자명"].unique():
-            for ch_name, ch_df in [("전화",phone),("채팅",chat),("게시판",board)]:
-                if len(ch_df)==0: continue
-                sub = ch_df[ch_df["사업자명"]==biz]
-                if len(sub)==0: continue
-                rr_rows.append({
-                    "사업자명":biz,"채널":ch_name,
-                    "인입":len(sub),"응답률(%)":response_rate(sub),
-                })
-        if rr_rows:
-            rr_df = pd.DataFrame(rr_rows)
-            fig4 = px.bar(rr_df,x="사업자명",y="응답률(%)",color="채널",
-                          barmode="group",
-                          color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"},
-                          text="응답률(%)")
-            fig4.update_traces(textposition="outside",textfont_size=10)
-            fig4.update_layout(
-                height=360,yaxis=dict(range=[0,110]),
-                margin=dict(t=10,b=40,l=0,r=10),
-                plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-                font=dict(size=11))
-            st.plotly_chart(fig4, use_container_width=True)
-            compact_table(rr_df, height=260)
-
-    with t3:
-        sec("사업자별 채널 인입 분포")
-        ch_rows = []
-        for ch_name, ch_df in [("전화",phone),("채팅",chat),("게시판",board)]:
-            if len(ch_df)==0: continue
-            sub = ch_df.groupby("사업자명").size().reset_index(name="건수")
-            sub["채널"] = ch_name
-            ch_rows.append(sub)
-        if ch_rows:
-            ch_df2 = pd.concat(ch_rows)
-            fig5 = px.bar(ch_df2,x="사업자명",y="건수",color="채널",barmode="stack",
-                          color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"})
-            chart_cfg(fig5,h=360)
-            st.plotly_chart(fig5, use_container_width=True)
-
-    with t4:
-        sec("사업자 > 브랜드 드릴다운")
-        biz_list2 = sorted(all_df["사업자명"].replace("",np.nan).dropna().unique())
-        if not biz_list2:
-            st.info("사업자명 데이터가 없습니다."); return
-        sel_biz  = st.selectbox("사업자 선택", biz_list2, key="biz_drill")
-        filtered = all_df[all_df["사업자명"]==sel_biz]
-        brand_d  = (filtered.groupby(["브랜드","채널"]).size()
-                    .reset_index(name="건수").sort_values("건수",ascending=False))
-        fig6 = px.bar(brand_d,x="브랜드",y="건수",color="채널",barmode="stack",
-                      color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"})
-        chart_cfg(fig6,h=320)
+    # 히트맵
+    st.markdown('<div class="section-title">인입 히트맵 (날짜 × 시간대)</div>', unsafe_allow_html=True)
+    if "인입시간대" in phone.columns and "일자" in phone.columns:
+        phone_copy = phone.copy()
+        phone_copy["일자str"] = phone_copy["일자"].dt.strftime("%m-%d")
+        pivot = phone_copy.pivot_table(index="일자str", columns="인입시간대",
+                                       values="응대여부", aggfunc="count", fill_value=0)
+        fig6 = heatmap_chart(pivot, title="날짜 × 시간대 인입 히트맵")
         st.plotly_chart(fig6, use_container_width=True)
 
-        sec("브랜드별 대분류 분포")
-        cat_d = (filtered[filtered["대분류"]!=""]
-                 .groupby(["브랜드","대분류"]).size().reset_index(name="건수"))
-        if len(cat_d)>0:
-            fig7 = px.bar(cat_d,x="브랜드",y="건수",color="대분류",
-                          barmode="stack",color_discrete_sequence=COLORS)
-            chart_cfg(fig7,h=320)
-            st.plotly_chart(fig7, use_container_width=True)
-        with st.expander("상세 테이블",expanded=False):
-            compact_table(brand_d, height=300)
-
 # ─────────────────────────────────────────────
-# PAGE — 전화 현황
-# ─────────────────────────────────────────────
-def page_phone(phone, unit, month_range):
-    st.markdown('<div class="page-title">전화 현황</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">전화 채널 운영 지표'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
-
-    if len(phone)==0:
-        st.info("전화 데이터가 없습니다."); return
-
-    responded = phone[~phone["미응대"]]
-    prev_lbl  = {"일별":"전일","주별":"전주","월별":"전월"}.get(unit,"전기")
-    cur,prev,yoy,_ = get_period_kpi(phone,unit)
-
-    c1,c2,c3,c4,c5 = st.columns(5)
-    with c1: kpi("전체 인입",  f"{len(phone):,}건")
-    with c2: kpi("응대",       f"{len(responded):,}건",       color="#22c55e")
-    with c3: kpi("미응대",     f"{phone['미응대'].sum():,}건", color="#ef4444")
-    with c4: kpi("응답률",     f"{response_rate(phone)}%",     color="#3b82f6")
-    with c5: kpi("평균 AHT",
-                 fmt_sec(responded["AHT(초)"].mean() if len(responded)>0 else 0),
-                 sub=(f"통화 {fmt_sec(responded['통화시간(초)'].mean())} / "
-                      f"ACW {fmt_sec(responded['ACW시간(초)'].mean())}")
-                 if len(responded)>0 else "",
-                 color="#8b5cf6")
-
-    bh = delta_row(cur,prev,yoy,unit)
-    if bh:
-        st.markdown(
-            f"<div style='font-size:12px;margin-bottom:16px'>인입 &nbsp; {bh}</div>",
-            unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    t1,t2,t3,t4 = st.tabs(["추이 분석","시간대별 인입/응대","대분류 분석","상세 테이블"])
-
-    with t1:
-        sec(f"인입 추이 ({unit})")
-        trend_chart({"전화 인입":phone,"응대":responded},
-                    unit=unit,y_label="건수",h=320,month_range=month_range)
-        sec(f"평균 AHT 추이 ({unit})")
-        trend_chart({"평균 AHT(초)":responded},
-                    unit=unit,val_col="AHT(초)",agg="mean",
-                    y_label="AHT(초)",h=280,month_range=month_range)
-        sec(f"평균 대기시간 추이 ({unit})")
-        trend_chart({"평균 대기(초)":responded},
-                    unit=unit,val_col="대기시간(초)",agg="mean",
-                    y_label="대기시간(초)",h=260,month_range=month_range)
-
-    with t2:
-        hourly_inbound_chart(phone, "시간대별 전화 인입/응대 현황")
-        if len(responded)>0:
-            sec("시간대별 평균 대기시간 / AHT")
-            aht_h = (responded.groupby("인입시간대")[["대기시간(초)","AHT(초)"]]
-                     .mean().round(1).reset_index())
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(
-                x=aht_h["인입시간대"],y=aht_h["대기시간(초)"],
-                name="평균 대기(초)",marker_color="#3b82f6",opacity=0.8))
-            fig2.add_trace(go.Scatter(
-                x=aht_h["인입시간대"],y=aht_h["AHT(초)"],
-                name="평균 AHT(초)",mode="lines+markers",
-                line=dict(color="#f97316",width=2.5),marker=dict(size=8),yaxis="y2"))
-            fig2.update_layout(
-                height=300,
-                yaxis=dict(title="대기시간(초)"),
-                yaxis2=dict(title="AHT(초)",overlaying="y",side="right"),
-                xaxis=dict(dtick=1),
-                margin=dict(t=10,b=40,l=0,r=60),
-                plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-                font=dict(size=11))
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with t3:
-        sec("대분류별 인입 비중")
-        cat_d = (phone[phone["대분류"]!=""].groupby("대분류").size()
-                 .reset_index(name="건수").sort_values("건수",ascending=False))
-        if len(cat_d)>0:
-            col1,col2 = st.columns([1,1])
-            with col1:
-                fig3 = px.pie(cat_d,names="대분류",values="건수",hole=0.6,
-                              color_discrete_sequence=COLORS)
-                fig3.update_traces(textposition="inside",textinfo="percent+label",textfont_size=11)
-                fig3.update_layout(height=300,margin=dict(t=0,b=0,l=0,r=0),
-                                   plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig3, use_container_width=True)
-            with col2:
-                if len(responded)>0:
-                    sec("대분류별 평균 AHT")
-                    aht_cat = (responded[responded["대분류"]!=""]
-                               .groupby("대분류")["AHT(초)"]
-                               .mean().round(1).reset_index()
-                               .sort_values("AHT(초)",ascending=True))
-                    fig4 = px.bar(aht_cat,y="대분류",x="AHT(초)",orientation="h",
-                                  color="대분류",color_discrete_sequence=COLORS,text="AHT(초)")
-                    fig4.update_traces(textposition="outside",textfont_size=10)
-                    fig4.update_layout(height=300,showlegend=False,
-                                       margin=dict(t=10,b=10,l=0,r=60),
-                                       plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                                       font=dict(size=11))
-                    st.plotly_chart(fig4, use_container_width=True)
-            sec("사업자별 인입 현황")
-            biz_ph = (phone.groupby("사업자명").size()
-                      .reset_index(name="건수").sort_values("건수",ascending=False))
-            fig5 = px.bar(biz_ph,x="사업자명",y="건수",
-                          color="사업자명",color_discrete_sequence=COLORS,text="건수")
-            fig5.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig5,h=280)
-            fig5.update_layout(showlegend=False)
-            st.plotly_chart(fig5, use_container_width=True)
-
-    with t4:
-        sec("전화 로그 상세")
-        show_cols = [c for c in
-                     ["일자","사업자명","브랜드","상담사명","미응대","인입시각",
-                      "대기시간(초)","통화시간(초)","ACW시간(초)","AHT(초)",
-                      "대분류","중분류","소분류"]
-                     if c in phone.columns]
-        compact_table(phone[show_cols], height=400)
-
-# ─────────────────────────────────────────────
-# PAGE — 전화 상담사
+# 전화 상담사 페이지
 # ─────────────────────────────────────────────
 def page_phone_agent(phone, unit, month_range):
-    st.markdown('<div class="page-title">전화 상담사 분석</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">상담사별 전화 처리 성과'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+    if phone.empty:
+        st.info("전화 데이터가 없습니다.")
+        return
 
-    if len(phone)==0:
-        st.info("전화 데이터가 없습니다."); return
+    st.markdown('<div class="section-title">상담사별 전화 성과</div>', unsafe_allow_html=True)
+    responded = phone[phone["응대여부"] == "응대"]
+    if responded.empty:
+        st.info("응대 데이터가 없습니다.")
+        return
 
-    responded = phone[~phone["미응대"]]
-    t1,t2,t3 = st.tabs(["상담사별 성과","팀별 현황","근속그룹별"])
+    agent_df = responded.groupby("상담사명").agg(
+        응대수=("상담사명", "count"),
+        평균대기=("대기시간(초)", "mean"),
+        평균통화=("통화시간(초)", "mean"),
+        평균ACW=("ACW시간(초)", "mean"),
+        평균AHT=("AHT(초)", "mean"),
+    ).round(1).reset_index().sort_values("응대수", ascending=False)
 
-    with t1:
-        if len(responded)==0:
-            st.info("응대 데이터가 없습니다.")
-        else:
-            sec("상담사별 핵심 지표")
-            ag = (responded.groupby("상담사명")
-                  .agg(처리건수=("AHT(초)","count"),
-                       평균대기=("대기시간(초)","mean"),
-                       평균통화=("통화시간(초)","mean"),
-                       평균ACW=("ACW시간(초)","mean"),
-                       평균AHT=("AHT(초)","mean"))
-                  .round(1).reset_index()
-                  .sort_values("처리건수",ascending=False))
-            ag["미응대수"] = (phone[phone["미응대"]].groupby("상담사명").size()
-                             .reindex(ag["상담사명"]).fillna(0).values)
-            ag["응답률(%)"] = (ag["처리건수"]/(ag["처리건수"]+ag["미응대수"])*100).round(1)
-            cmap = make_color_map(ag["상담사명"].unique())
-            fig = px.bar(ag.head(20),x="상담사명",y="처리건수",
-                         color="상담사명",color_discrete_map=cmap,text="처리건수")
-            fig.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig,h=300)
-            fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(agent_df, use_container_width=True, height=400)
 
-            sec(f"상담사별 AHT 추이 ({unit}) — Top5")
-            cutoff = get_chart_range(unit,month_range)
-            pc     = get_period_col(unit)
-            top5   = ag.head(5)["상담사명"].tolist()
-            fig2   = go.Figure()
-            cmap2  = make_color_map(top5)
-            for ag_name in top5:
-                sub = responded[(responded["상담사명"]==ag_name)&
-                                (responded["일자"]>=pd.Timestamp(cutoff))]
-                if pc not in sub.columns or len(sub)==0: continue
-                s = sub.groupby(pc)["AHT(초)"].mean().round(1).reset_index()
-                fig2.add_trace(go.Scatter(
-                    x=s[pc],y=s["AHT(초)"],mode="lines+markers",name=ag_name,
-                    line=dict(color=cmap2.get(ag_name,"#888"),width=2),marker=dict(size=6)))
-            chart_cfg(fig2,h=300)
-            fig2.update_layout(hovermode="x unified")
-            st.plotly_chart(fig2, use_container_width=True)
+    # 팀별 평균
+    if "팀명" in responded.columns:
+        st.markdown('<div class="section-title">팀별 평균 AHT</div>', unsafe_allow_html=True)
+        team_df = responded.groupby("팀명").agg(
+            응대수=("팀명", "count"),
+            평균AHT=("AHT(초)", "mean"),
+        ).round(1).reset_index()
+        fig = px.bar(team_df, x="팀명", y="평균AHT",
+                     color_discrete_sequence=[COLORS["primary"]])
+        fig.update_layout(**base_layout(300, "팀별 평균 AHT (초)"))
+        st.plotly_chart(fig, use_container_width=True)
 
-            with st.expander("상담사별 수치 테이블",expanded=False):
-                compact_table(ag, height=340)
-
-    with t2:
-        if "팀명" in phone.columns and len(responded)>0:
-            sec("팀별 처리 현황")
-            team_r = (responded.groupby("팀명")
-                      .agg(처리건수=("AHT(초)","count"),
-                           평균AHT=("AHT(초)","mean"),
-                           평균대기=("대기시간(초)","mean"))
-                      .round(1).reset_index()
-                      .sort_values("처리건수",ascending=False))
-            fig3 = px.bar(team_r,x="팀명",y="처리건수",
-                          color="팀명",color_discrete_sequence=COLORS,text="처리건수")
-            fig3.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig3,h=280)
-            fig3.update_layout(showlegend=False)
-            st.plotly_chart(fig3, use_container_width=True)
-            trend_dict = {tm:responded[responded["팀명"]==tm] for tm in team_r["팀명"].tolist()}
-            trend_chart(trend_dict,unit=unit,val_col="AHT(초)",agg="mean",
-                        y_label="평균AHT(초)",h=280,month_range=month_range)
-            compact_table(team_r,height=240)
-        else:
-            st.info("팀명 정보가 없습니다.")
-
-    with t3:
-        if "근속그룹" in phone.columns and len(responded)>0:
-            sec("근속그룹별 평균 AHT")
-            tg = (responded.groupby("근속그룹")
-                  .agg(처리건수=("AHT(초)","count"),
-                       평균AHT=("AHT(초)","mean"),
-                       평균통화=("통화시간(초)","mean"),
-                       평균ACW=("ACW시간(초)","mean"))
-                  .round(1).reset_index())
-            order = [g for _,g in TENURE_GROUPS]
-            tg["순서"] = tg["근속그룹"].apply(lambda x: order.index(x) if x in order else 99)
-            tg = tg.sort_values("순서")
-            fig4 = px.bar(tg,x="근속그룹",y="평균AHT",
-                          color="근속그룹",color_discrete_sequence=COLORS,
-                          text="처리건수",labels={"평균AHT":"평균 AHT(초)"})
-            fig4.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig4,h=300)
-            fig4.update_layout(showlegend=False)
-            st.plotly_chart(fig4, use_container_width=True)
-            compact_table(tg.drop(columns=["순서"]),height=260)
-        else:
-            st.info("근속그룹 정보가 없습니다.")
+    # 근속그룹별
+    if "근속그룹" in responded.columns:
+        st.markdown('<div class="section-title">근속그룹별 AHT</div>', unsafe_allow_html=True)
+        tg_df = responded.groupby("근속그룹").agg(
+            응대수=("근속그룹", "count"),
+            평균AHT=("AHT(초)", "mean"),
+        ).round(1).reset_index()
+        fig2 = px.bar(tg_df, x="근속그룹", y="평균AHT",
+                      color_discrete_sequence=[COLORS["info"]])
+        fig2.update_layout(**base_layout(300, "근속그룹별 평균 AHT (초)"))
+        st.plotly_chart(fig2, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# PAGE — 채팅 현황
+# 채팅 현황 페이지
 # ─────────────────────────────────────────────
-def page_chat(chat, unit, month_range):
-    st.markdown('<div class="page-title">채팅 현황</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">채팅 채널 운영 지표'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+def page_chat(chat, unit, month_range, start, end):
+    if chat.empty:
+        st.info("채팅 데이터가 없습니다.")
+        return
 
-    if len(chat)==0:
-        st.info("채팅 데이터가 없습니다."); return
+    responded = chat[chat["응대여부"] == "응대"]
+    total    = len(chat)
+    resp_cnt = len(responded)
+    rr       = resp_cnt / total * 100 if total else 0
+    avg_resp = responded["응답시간(초)"].mean() if not responded.empty else 0
+    avg_lead = responded["리드타임(초)"].mean() if not responded.empty else 0
 
-    responded = chat[~chat["미응대"]]
-    prev_lbl  = {"일별":"전일","주별":"전주","월별":"전월"}.get(unit,"전기")
-    cur,prev,yoy,_ = get_period_kpi(chat,unit)
-    lt_cur,lt_prev,lt_yoy,_ = get_period_kpi(responded,unit,val_col="리드타임(초)",agg="mean")
+    cols = st.columns(5)
+    kpis = [
+        ("전체 인입", f"{total:,}", "건"),
+        ("응대", f"{resp_cnt:,}", "건"),
+        ("응대율", fmt_pct(rr), ""),
+        ("평균 응답시간", fmt_sec(avg_resp), ""),
+        ("평균 리드타임", fmt_sec(avg_lead), ""),
+    ]
+    for col, (label, val, u) in zip(cols, kpis):
+        with col:
+            st.markdown(kpi_card(label, val, unit=u), unsafe_allow_html=True)
 
-    c1,c2,c3,c4,c5 = st.columns(5)
-    with c1: kpi("전체 인입",  f"{len(chat):,}건")
-    with c2: kpi("응대",       f"{len(responded):,}건",      color="#22c55e")
-    with c3: kpi("미응대",     f"{chat['미응대'].sum():,}건", color="#ef4444")
-    with c4: kpi("응답률",     f"{response_rate(chat)}%",     color="#3b82f6")
-    with c5: kpi("평균 리드타임",
-                 fmt_sec(responded["리드타임(초)"].mean() if len(responded)>0 else 0),
-                 sub=f"평균 응답 {fmt_sec(responded['응답시간(초)'].mean())}" if len(responded)>0 else "",
-                 delta=calc_delta(lt_cur,lt_prev),delta_label=prev_lbl,reverse=True,color="#8b5cf6")
+    # 추이
+    pc = get_period_col(unit)
+    cr_s, _ = get_chart_range(unit, end, month_range)
+    ch_in = chat[chat[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
+    ch_re = responded[responded[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
 
-    bh = delta_row(cur,prev,yoy,unit)
-    if bh:
-        st.markdown(
-            f"<div style='font-size:12px;margin-bottom:16px'>인입 &nbsp; {bh}</div>",
-            unsafe_allow_html=True)
+    st.markdown('<div class="section-title">인입/응대 추이</div>', unsafe_allow_html=True)
+    col_t, col_d = st.columns([2, 1])
+    with col_t:
+        fig = trend_chart({"채팅 인입": ch_in, "응대": ch_re},
+                          unit=unit, y_label="건수", title="채팅 인입 / 응대 추이")
+        st.plotly_chart(fig, use_container_width=True)
+    with col_d:
+        fig2 = donut_chart(["응대", "미응대"], [resp_cnt, total - resp_cnt],
+                           [COLORS["success"], COLORS["danger"]], title="응대 현황")
+        st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    t1,t2,t3,t4 = st.tabs(["추이 분석","시간대별 인입/응대","대분류별 리드타임","상세 테이블"])
+    # 대분류별 리드타임
+    if "대분류" in chat.columns and not responded.empty:
+        st.markdown('<div class="section-title">대분류별 평균 리드타임</div>', unsafe_allow_html=True)
+        cat_df = responded.groupby("대분류").agg(
+            건수=("대분류", "count"),
+            평균리드타임=("리드타임(초)", "mean"),
+        ).round(1).reset_index().sort_values("건수", ascending=False)
+        fig3 = px.bar(cat_df, x="대분류", y="평균리드타임",
+                      color_discrete_sequence=[COLORS["chat"]])
+        fig3.update_layout(**base_layout(300, "대분류별 평균 리드타임 (초)"))
+        st.plotly_chart(fig3, use_container_width=True)
 
-    with t1:
-        sec(f"인입 추이 ({unit})")
-        trend_chart({"채팅 인입":chat,"응대":responded},
-                    unit=unit,y_label="건수",h=320,month_range=month_range)
-        sec(f"평균 리드타임 추이 ({unit})")
-        trend_chart({"평균 리드타임(초)":responded},
-                    unit=unit,val_col="리드타임(초)",agg="mean",
-                    y_label="리드타임(초)",h=280,month_range=month_range)
-        sec(f"평균 응답시간 추이 ({unit})")
-        trend_chart({"평균 응답시간(초)":responded},
-                    unit=unit,val_col="응답시간(초)",agg="mean",
-                    y_label="응답시간(초)",h=260,month_range=month_range)
+    # 시간대별
+    st.markdown('<div class="section-title">시간대별 인입 현황</div>', unsafe_allow_html=True)
+    hourly = chat.groupby("인입시간대").agg(
+        인입=("인입시간대", "count"),
+        응대=("응대여부", lambda x: (x == "응대").sum()),
+    ).reset_index()
+    fig4 = go.Figure()
+    fig4.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["인입"],
+                          name="인입", marker_color=hex_rgba(COLORS["chat"], 0.7)))
+    fig4.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["응대"],
+                          name="응대", marker_color=COLORS["chat"]))
+    fig4.update_layout(**base_layout(300, "시간대별 인입 / 응대"))
+    st.plotly_chart(fig4, use_container_width=True)
 
-    with t2:
-        hourly_inbound_chart(chat,"시간대별 채팅 인입/응대 현황")
-        if len(responded)>0:
-            sec("시간대별 평균 응답시간 / 리드타임")
-            lt_h = (responded.groupby("인입시간대")[["응답시간(초)","리드타임(초)"]]
-                    .mean().round(1).reset_index())
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(
-                x=lt_h["인입시간대"],y=lt_h["응답시간(초)"],
-                name="평균 응답(초)",marker_color="#22c55e",opacity=0.8))
-            fig2.add_trace(go.Scatter(
-                x=lt_h["인입시간대"],y=lt_h["리드타임(초)"],
-                name="평균 리드타임(초)",mode="lines+markers",
-                line=dict(color="#f97316",width=2.5),marker=dict(size=8),yaxis="y2"))
-            fig2.update_layout(
-                height=300,
-                yaxis=dict(title="응답시간(초)"),
-                yaxis2=dict(title="리드타임(초)",overlaying="y",side="right"),
-                xaxis=dict(dtick=1),
-                margin=dict(t=10,b=40,l=0,r=60),
-                plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-                font=dict(size=11))
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with t3:
-        CHAT_G1 = ["주문/결제","상품"]
-        if len(responded)>0:
-            sec("대분류별 평균 리드타임")
-            lt_cat = (responded[responded["대분류"]!=""]
-                      .groupby("대분류")["리드타임(초)"]
-                      .agg(["mean","count"]).round(1).reset_index()
-                      .rename(columns={"mean":"평균리드타임(초)","count":"건수"}))
-            lt_cat["그룹"] = lt_cat["대분류"].apply(
-                lambda x: "그룹1 (주문/결제·상품)" if x in CHAT_G1
-                else "그룹2 (배송·취소·교환·반품·기타)")
-            fig3 = px.bar(lt_cat.sort_values("평균리드타임(초)",ascending=True),
-                          y="대분류",x="평균리드타임(초)",orientation="h",color="그룹",
-                          color_discrete_map={
-                              "그룹1 (주문/결제·상품)":"#3b82f6",
-                              "그룹2 (배송·취소·교환·반품·기타)":"#f97316"},
-                          text="건수")
-            fig3.update_traces(textposition="outside",textfont_size=10)
-            fig3.update_layout(height=max(300,len(lt_cat)*30+60),
-                               margin=dict(t=10,b=10,l=0,r=60),
-                               plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                               font=dict(size=11))
-            st.plotly_chart(fig3, use_container_width=True)
-
-            sec(f"그룹별 리드타임 추이 ({unit})")
-            r2 = responded.copy()
-            r2["그룹"] = r2["대분류"].apply(lambda x: "그룹1" if x in CHAT_G1 else "그룹2")
-            trend_chart({"그룹1":r2[r2["그룹"]=="그룹1"],"그룹2":r2[r2["그룹"]=="그룹2"]},
-                        unit=unit,val_col="리드타임(초)",agg="mean",
-                        y_label="평균리드타임(초)",h=280,month_range=month_range)
-
-    with t4:
-        sec("채팅 로그 상세")
-        show_cols = [c for c in
-                     ["일자","사업자명","브랜드","플랫폼","상담사명","미응대",
-                      "접수일시","첫멘트발송일시","종료일시","배분전포기여부",
-                      "응답시간(초)","리드타임(초)","대분류","중분류","소분류"]
-                     if c in chat.columns]
-        compact_table(chat[show_cols], height=400)
+    # 플랫폼 분포
+    if "플랫폼" in chat.columns:
+        st.markdown('<div class="section-title">플랫폼별 인입 분포</div>', unsafe_allow_html=True)
+        plat = chat.groupby("플랫폼").size().reset_index(name="건수")
+        fig5 = donut_chart(plat["플랫폼"].tolist(), plat["건수"].tolist(), title="플랫폼 분포")
+        st.plotly_chart(fig5, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# PAGE — 채팅 상담사
+# 채팅 상담사 페이지
 # ─────────────────────────────────────────────
 def page_chat_agent(chat, unit, month_range):
-    st.markdown('<div class="page-title">채팅 상담사 분석</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">상담사별 채팅 처리 성과'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+    if chat.empty:
+        st.info("채팅 데이터가 없습니다.")
+        return
 
-    if len(chat)==0:
-        st.info("채팅 데이터가 없습니다."); return
+    responded = chat[chat["응대여부"] == "응대"]
+    if responded.empty:
+        st.info("응대 데이터가 없습니다.")
+        return
 
-    responded = chat[~chat["미응대"]]
-    t1,t2,t3 = st.tabs(["상담사별 성과","팀별 현황","근속그룹별"])
+    st.markdown('<div class="section-title">상담사별 채팅 성과</div>', unsafe_allow_html=True)
+    agent_df = responded.groupby("상담사명").agg(
+        응대수=("상담사명", "count"),
+        평균응답시간=("응답시간(초)", "mean"),
+        평균리드타임=("리드타임(초)", "mean"),
+    ).round(1).reset_index().sort_values("응대수", ascending=False)
+    st.dataframe(agent_df, use_container_width=True, height=400)
 
-    with t1:
-        if len(responded)==0:
-            st.info("응대 데이터가 없습니다.")
-        else:
-            sec("상담사별 핵심 지표")
-            ag = (responded.groupby("상담사명")
-                  .agg(처리건수=("리드타임(초)","count"),
-                       평균응답=("응답시간(초)","mean"),
-                       평균리드타임=("리드타임(초)","mean"))
-                  .round(1).reset_index()
-                  .sort_values("처리건수",ascending=False))
-            cmap = make_color_map(ag["상담사명"].unique())
-            fig = px.bar(ag.head(20),x="상담사명",y="처리건수",
-                         color="상담사명",color_discrete_map=cmap,text="처리건수")
-            fig.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig,h=300)
-            fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-
-            sec(f"상담사별 리드타임 추이 ({unit}) — Top5")
-            cutoff = get_chart_range(unit,month_range)
-            pc     = get_period_col(unit)
-            top5   = ag.head(5)["상담사명"].tolist()
-            fig2   = go.Figure()
-            cmap2  = make_color_map(top5)
-            for ag_name in top5:
-                sub = responded[(responded["상담사명"]==ag_name)&
-                                (responded["일자"]>=pd.Timestamp(cutoff))]
-                if pc not in sub.columns or len(sub)==0: continue
-                s = sub.groupby(pc)["리드타임(초)"].mean().round(1).reset_index()
-                fig2.add_trace(go.Scatter(
-                    x=s[pc],y=s["리드타임(초)"],mode="lines+markers",name=ag_name,
-                    line=dict(color=cmap2.get(ag_name,"#888"),width=2),marker=dict(size=6)))
-            chart_cfg(fig2,h=300)
-            fig2.update_layout(hovermode="x unified")
-            st.plotly_chart(fig2, use_container_width=True)
-
-            with st.expander("상담사별 수치 테이블",expanded=False):
-                compact_table(ag, height=320)
-
-    with t2:
-        if "팀명" in chat.columns and len(responded)>0:
-            sec("팀별 처리 현황")
-            team_r = (responded.groupby("팀명")
-                      .agg(처리건수=("리드타임(초)","count"),
-                           평균리드타임=("리드타임(초)","mean"),
-                           평균응답=("응답시간(초)","mean"))
-                      .round(1).reset_index()
-                      .sort_values("처리건수",ascending=False))
-            fig3 = px.bar(team_r,x="팀명",y="처리건수",
-                          color="팀명",color_discrete_sequence=COLORS,text="처리건수")
-            fig3.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig3,h=280)
-            fig3.update_layout(showlegend=False)
-            st.plotly_chart(fig3, use_container_width=True)
-            compact_table(team_r,height=240)
-        else:
-            st.info("팀명 정보가 없습니다.")
-
-    with t3:
-        if "근속그룹" in chat.columns and len(responded)>0:
-            sec("근속그룹별 평균 리드타임")
-            tg = (responded.groupby("근속그룹")
-                  .agg(처리건수=("리드타임(초)","count"),
-                       평균리드타임=("리드타임(초)","mean"),
-                       평균응답=("응답시간(초)","mean"))
-                  .round(1).reset_index())
-            order = [g for _,g in TENURE_GROUPS]
-            tg["순서"] = tg["근속그룹"].apply(lambda x: order.index(x) if x in order else 99)
-            tg = tg.sort_values("순서")
-            fig4 = px.bar(tg,x="근속그룹",y="평균리드타임",
-                          color="근속그룹",color_discrete_sequence=COLORS,
-                          text="처리건수",labels={"평균리드타임":"평균 리드타임(초)"})
-            fig4.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig4,h=300)
-            fig4.update_layout(showlegend=False)
-            st.plotly_chart(fig4, use_container_width=True)
-            compact_table(tg.drop(columns=["순서"]),height=260)
-        else:
-            st.info("근속그룹 정보가 없습니다.")
+    if "팀명" in responded.columns:
+        st.markdown('<div class="section-title">팀별 평균 리드타임</div>', unsafe_allow_html=True)
+        team_df = responded.groupby("팀명").agg(
+            응대수=("팀명", "count"),
+            평균리드타임=("리드타임(초)", "mean"),
+        ).round(1).reset_index()
+        fig = px.bar(team_df, x="팀명", y="평균리드타임",
+                     color_discrete_sequence=[COLORS["chat"]])
+        fig.update_layout(**base_layout(300, "팀별 평균 리드타임 (초)"))
+        st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# PAGE — 게시판 현황
+# 게시판 현황 페이지
 # ─────────────────────────────────────────────
-def page_board(board, unit, month_range):
-    st.markdown('<div class="page-title">게시판 현황</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">게시판/티켓 채널 — 근무내/외 리드타임 분리'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+def page_board(board, unit, month_range, start, end):
+    if board.empty:
+        st.info("게시판 데이터가 없습니다.")
+        return
 
-    if len(board)==0:
-        st.info("게시판 데이터가 없습니다."); return
+    responded = board[board["응대여부"] == "응대"]
+    total    = len(board)
+    resp_cnt = len(responded)
+    rr       = resp_cnt / total * 100 if total else 0
+    avg_lead = responded["리드타임(초)"].mean() if not responded.empty else 0
 
-    responded = board[~board["미응대"]]
-    prev_lbl  = {"일별":"전일","주별":"전주","월별":"전월"}.get(unit,"전기")
-    cur,prev,yoy,_ = get_period_kpi(board,unit)
-    wl_cur,wl_prev,wl_yoy,_ = get_period_kpi(
-        responded,unit,val_col="근무내리드타임(분)",agg="mean")
+    cols = st.columns(4)
+    kpis = [
+        ("전체 티켓", f"{total:,}", "건"),
+        ("응답완료", f"{resp_cnt:,}", "건"),
+        ("응답률", fmt_pct(rr), ""),
+        ("평균 리드타임", fmt_sec(avg_lead), ""),
+    ]
+    for col, (label, val, u) in zip(cols, kpis):
+        with col:
+            st.markdown(kpi_card(label, val, unit=u), unsafe_allow_html=True)
 
-    c1,c2,c3,c4,c5 = st.columns(5)
-    with c1: kpi("전체 티켓",  f"{len(board):,}건")
-    with c2: kpi("응답 완료",  f"{len(responded):,}건",       color="#22c55e")
-    with c3: kpi("미응대",     f"{board['미응대'].sum():,}건", color="#ef4444")
-    with c4: kpi("응답률",     f"{response_rate(board)}%",     color="#3b82f6")
-    with c5: kpi("근무내 리드타임",
-                 fmt_min(responded["근무내리드타임(분)"].mean() if len(responded)>0 else 0),
-                 sub=f"근무외 {fmt_min(responded['근무외리드타임(분)'].mean())}" if len(responded)>0 else "",
-                 delta=calc_delta(wl_cur,wl_prev),delta_label=prev_lbl,reverse=True,color="#8b5cf6")
+    # 추이
+    pc = get_period_col(unit)
+    cr_s, _ = get_chart_range(unit, end, month_range)
+    bo_in = board[board[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
+    bo_re = responded[responded[pc] >= pd.Timestamp(cr_s)].groupby(pc).size().reset_index(name="건수")
 
-    bh = delta_row(cur,prev,yoy,unit)
-    if bh:
-        st.markdown(
-            f"<div style='font-size:12px;margin-bottom:16px'>티켓 &nbsp; {bh}</div>",
-            unsafe_allow_html=True)
+    st.markdown('<div class="section-title">티켓 접수 / 응답 추이</div>', unsafe_allow_html=True)
+    col_t, col_d = st.columns([2, 1])
+    with col_t:
+        fig = trend_chart({"접수": bo_in, "응답": bo_re},
+                          unit=unit, y_label="건수", title="게시판 접수 / 응답 추이")
+        st.plotly_chart(fig, use_container_width=True)
+    with col_d:
+        fig2 = donut_chart(["응답", "미응답"], [resp_cnt, total - resp_cnt],
+                           [COLORS["success"], COLORS["danger"]], title="응답 현황")
+        st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    t1,t2,t3,t4 = st.tabs(["추이 분석","시간대별 인입/응대","플랫폼 분석","상세 테이블"])
+    # 대분류별
+    if "대분류" in board.columns:
+        st.markdown('<div class="section-title">대분류별 티켓 분석</div>', unsafe_allow_html=True)
+        cat_df = board.groupby("대분류").agg(
+            건수=("대분류", "count"),
+            응답수=("응대여부", lambda x: (x == "응대").sum()),
+        ).reset_index()
+        cat_df["응답률"] = (cat_df["응답수"] / cat_df["건수"] * 100).round(1)
+        fig3 = px.bar(cat_df, x="대분류", y="건수",
+                      color_discrete_sequence=[COLORS["board"]])
+        fig3.update_layout(**base_layout(300, "대분류별 티켓 건수"))
+        st.plotly_chart(fig3, use_container_width=True)
 
-    with t1:
-        sec(f"티켓 인입 추이 ({unit})")
-        trend_chart({"전체":board,"응답":responded},
-                    unit=unit,y_label="건수",h=320,month_range=month_range)
-        sec(f"근무내 리드타임 추이 ({unit})")
-        trend_chart({"근무내(분)":responded},
-                    unit=unit,val_col="근무내리드타임(분)",agg="mean",
-                    y_label="근무내리드타임(분)",h=280,month_range=month_range)
-        sec(f"근무외 리드타임 추이 ({unit})")
-        trend_chart({"근무외(분)":responded},
-                    unit=unit,val_col="근무외리드타임(분)",agg="mean",
-                    y_label="근무외리드타임(분)",h=260,month_range=month_range)
+    # 플랫폼 분포
+    if "플랫폼" in board.columns:
+        st.markdown('<div class="section-title">플랫폼별 분포</div>', unsafe_allow_html=True)
+        plat = board.groupby("플랫폼").size().reset_index(name="건수")
+        fig4 = donut_chart(plat["플랫폼"].tolist(), plat["건수"].tolist(), title="플랫폼 분포")
+        st.plotly_chart(fig4, use_container_width=True)
 
-    with t2:
-        hourly_inbound_chart(board,"시간대별 게시판 인입/응대 현황")
-        if len(responded)>0:
-            sec("시간대별 평균 근무내 리드타임")
-            lt_h = (responded.groupby("인입시간대")[["근무내리드타임(분)","근무외리드타임(분)"]]
-                    .mean().round(1).reset_index())
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(
-                x=lt_h["인입시간대"],y=lt_h["근무내리드타임(분)"],
-                name="근무내(분)",marker_color="#3b82f6",opacity=0.8))
-            fig2.add_trace(go.Bar(
-                x=lt_h["인입시간대"],y=lt_h["근무외리드타임(분)"],
-                name="근무외(분)",marker_color="#f97316",opacity=0.8))
-            fig2.update_layout(
-                height=300, barmode="group",xaxis=dict(dtick=1),
-                margin=dict(t=10,b=40,l=0,r=10),
-                plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                legend=dict(orientation="h",y=1.02,x=1,xanchor="right",font=dict(size=11)),
-                font=dict(size=11))
-            fig2.update_xaxes(showgrid=False,showline=True,linecolor="#e2e8f0")
-            fig2.update_yaxes(showgrid=True,gridcolor="#f1f5f9")
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with t3:
-        sec("플랫폼별 인입 현황")
-        plat_d = (board[board["플랫폼"]!=""].groupby("플랫폼").size()
-                  .reset_index(name="건수").sort_values("건수",ascending=False))
-        if len(plat_d)>0:
-            col1,col2 = st.columns([1,1])
-            with col1:
-                fig3 = px.pie(plat_d,names="플랫폼",values="건수",hole=0.6,
-                              color_discrete_sequence=COLORS)
-                fig3.update_traces(textposition="inside",textinfo="percent+label",textfont_size=11)
-                fig3.update_layout(height=300,margin=dict(t=0,b=0,l=0,r=0),
-                                   plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig3, use_container_width=True)
-            with col2:
-                if len(responded)>0:
-                    sec("플랫폼별 근무내 리드타임")
-                    plt_lt = (responded[responded["플랫폼"]!=""]
-                              .groupby("플랫폼")["근무내리드타임(분)"]
-                              .mean().round(1).reset_index()
-                              .sort_values("근무내리드타임(분)",ascending=True))
-                    fig4 = px.bar(plt_lt,y="플랫폼",x="근무내리드타임(분)",orientation="h",
-                                  color="플랫폼",color_discrete_sequence=COLORS,
-                                  text="근무내리드타임(분)")
-                    fig4.update_traces(textposition="outside",textfont_size=10)
-                    fig4.update_layout(height=300,showlegend=False,
-                                       margin=dict(t=10,b=10,l=0,r=60),
-                                       plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-                                       font=dict(size=11))
-                    st.plotly_chart(fig4, use_container_width=True)
-
-        if len(responded)>0:
-            sec("대분류별 근무내/외 리드타임")
-            cat_lt = (responded[responded["대분류"]!=""]
-                      .groupby("대분류")
-                      .agg(건수=("근무내리드타임(분)","count"),
-                           근무내평균=("근무내리드타임(분)","mean"),
-                           근무외평균=("근무외리드타임(분)","mean"))
-                      .round(1).reset_index()
-                      .sort_values("건수",ascending=False))
-            fig5 = px.bar(cat_lt,x="대분류",y=["근무내평균","근무외평균"],
-                          barmode="group",
-                          color_discrete_map={"근무내평균":"#3b82f6","근무외평균":"#f97316"},
-                          labels={"value":"평균 리드타임(분)","variable":"구분"})
-            chart_cfg(fig5,h=300)
-            st.plotly_chart(fig5, use_container_width=True)
-
-    with t4:
-        sec("게시판 로그 상세")
-        show_cols = [c for c in
-                     ["일자","사업자명","브랜드","플랫폼","상담사명","미응대",
-                      "접수일시","응답일시",
-                      "근무내리드타임(분)","근무외리드타임(분)","전체리드타임(분)",
-                      "대분류","중분류","소분류"]
-                     if c in board.columns]
-        compact_table(board[show_cols], height=400)
+    # 시간대별
+    st.markdown('<div class="section-title">시간대별 접수 현황</div>', unsafe_allow_html=True)
+    hourly = board.groupby("인입시간대").agg(
+        접수=("인입시간대", "count"),
+        응답=("응대여부", lambda x: (x == "응대").sum()),
+    ).reset_index()
+    fig5 = go.Figure()
+    fig5.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["접수"],
+                          name="접수", marker_color=hex_rgba(COLORS["board"], 0.7)))
+    fig5.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["응답"],
+                          name="응답", marker_color=COLORS["board"]))
+    fig5.update_layout(**base_layout(300, "시간대별 접수 / 응답"))
+    st.plotly_chart(fig5, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# PAGE — 게시판 상담사
+# 게시판 상담사 페이지
 # ─────────────────────────────────────────────
 def page_board_agent(board, unit, month_range):
-    st.markdown('<div class="page-title">게시판 상담사 분석</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">상담사별 게시판 처리 성과'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+    if board.empty:
+        st.info("게시판 데이터가 없습니다.")
+        return
 
-    if len(board)==0:
-        st.info("게시판 데이터가 없습니다."); return
+    responded = board[board["응대여부"] == "응대"]
+    if responded.empty:
+        st.info("응답 데이터가 없습니다.")
+        return
 
-    responded = board[~board["미응대"]]
-    t1,t2,t3 = st.tabs(["상담사별 성과","팀별 현황","근속그룹별"])
+    st.markdown('<div class="section-title">상담사별 게시판 성과</div>', unsafe_allow_html=True)
+    agent_df = responded.groupby("상담사명").agg(
+        응답수=("상담사명", "count"),
+        평균리드타임=("리드타임(초)", "mean"),
+    ).round(1).reset_index().sort_values("응답수", ascending=False)
+    st.dataframe(agent_df, use_container_width=True, height=400)
 
-    with t1:
-        if len(responded)==0:
-            st.info("응대 데이터가 없습니다.")
-        else:
-            sec("상담사별 처리 현황")
-            ag = (responded.groupby("상담사명")
-                  .agg(처리건수=("근무내리드타임(분)","count"),
-                       근무내평균=("근무내리드타임(분)","mean"),
-                       근무외평균=("근무외리드타임(분)","mean"),
-                       전체평균=("전체리드타임(분)","mean"))
-                  .round(1).reset_index()
-                  .sort_values("처리건수",ascending=False))
-            cmap = make_color_map(ag["상담사명"].unique())
-            fig = px.bar(ag.head(20),x="상담사명",y="처리건수",
-                         color="상담사명",color_discrete_map=cmap,text="처리건수")
-            fig.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig,h=300)
-            fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-
-            sec(f"상담사별 근무내 리드타임 추이 ({unit}) — Top5")
-            cutoff = get_chart_range(unit,month_range)
-            pc     = get_period_col(unit)
-            top5   = ag.head(5)["상담사명"].tolist()
-            fig2   = go.Figure()
-            cmap2  = make_color_map(top5)
-            for ag_name in top5:
-                sub = responded[(responded["상담사명"]==ag_name)&
-                                (responded["일자"]>=pd.Timestamp(cutoff))]
-                if pc not in sub.columns or len(sub)==0: continue
-                s = sub.groupby(pc)["근무내리드타임(분)"].mean().round(1).reset_index()
-                fig2.add_trace(go.Scatter(
-                    x=s[pc],y=s["근무내리드타임(분)"],mode="lines+markers",name=ag_name,
-                    line=dict(color=cmap2.get(ag_name,"#888"),width=2),marker=dict(size=6)))
-            chart_cfg(fig2,h=300)
-            fig2.update_layout(hovermode="x unified")
-            st.plotly_chart(fig2, use_container_width=True)
-
-            with st.expander("상담사별 수치 테이블",expanded=False):
-                compact_table(ag, height=320)
-
-    with t2:
-        if "팀명" in board.columns and len(responded)>0:
-            sec("팀별 처리 현황")
-            team_r = (responded.groupby("팀명")
-                      .agg(처리건수=("근무내리드타임(분)","count"),
-                           근무내평균=("근무내리드타임(분)","mean"),
-                           근무외평균=("근무외리드타임(분)","mean"))
-                      .round(1).reset_index()
-                      .sort_values("처리건수",ascending=False))
-            fig3 = px.bar(team_r,x="팀명",y="처리건수",
-                          color="팀명",color_discrete_sequence=COLORS,text="처리건수")
-            fig3.update_traces(textposition="outside",textfont_size=10)
-            chart_cfg(fig3,h=280)
-            fig3.update_layout(showlegend=False)
-            st.plotly_chart(fig3, use_container_width=True)
-            compact_table(team_r,height=240)
-        else:
-            st.info("팀명 정보가 없습니다.")
-
-    with t3:
-        if "근속그룹" in board.columns and len(responded)>0:
-            sec("근속그룹별 평균 리드타임")
-            tg = (responded.groupby("근속그룹")
-                  .agg(처리건수=("근무내리드타임(분)","count"),
-                       근무내평균=("근무내리드타임(분)","mean"),
-                       근무외평균=("근무외리드타임(분)","mean"))
-                  .round(1).reset_index())
-            order = [g for _,g in TENURE_GROUPS]
-            tg["순서"] = tg["근속그룹"].apply(lambda x: order.index(x) if x in order else 99)
-            tg = tg.sort_values("순서")
-            fig4 = px.bar(tg,x="근속그룹",y=["근무내평균","근무외평균"],
-                          barmode="group",
-                          color_discrete_map={"근무내평균":"#3b82f6","근무외평균":"#f97316"},
-                          text_auto=True,labels={"value":"평균(분)","variable":"구분"})
-            chart_cfg(fig4,h=300)
-            st.plotly_chart(fig4, use_container_width=True)
-            compact_table(tg.drop(columns=["순서"]),height=260)
-        else:
-            st.info("근속그룹 정보가 없습니다.")
+    if "팀명" in responded.columns:
+        st.markdown('<div class="section-title">팀별 평균 리드타임</div>', unsafe_allow_html=True)
+        team_df = responded.groupby("팀명").agg(
+            응답수=("팀명", "count"),
+            평균리드타임=("리드타임(초)", "mean"),
+        ).round(1).reset_index()
+        fig = px.bar(team_df, x="팀명", y="평균리드타임",
+                     color_discrete_sequence=[COLORS["board"]])
+        fig.update_layout(**base_layout(300, "팀별 평균 리드타임 (초)"))
+        st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# PAGE — 상담사 종합
+# 상담사 종합 페이지
 # ─────────────────────────────────────────────
-def page_agent_total(phone, chat, board, unit, month_range):
-    st.markdown('<div class="page-title">상담사 종합 분석</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="page-sub">전채널 통합 상담사 성과 요약'
-        f'<span class="period-badge">{unit}</span></div>',
-        unsafe_allow_html=True)
+def page_agent_total(phone, chat, board):
+    st.markdown('<div class="section-title">상담사 종합 성과</div>', unsafe_allow_html=True)
 
-    t1,t2 = st.tabs(["채널별 처리 현황","근속그룹 종합"])
+    rows = []
+    for name in set(
+        list(phone["상담사명"].unique() if not phone.empty else []) +
+        list(chat["상담사명"].unique()  if not chat.empty  else []) +
+        list(board["상담사명"].unique() if not board.empty else [])
+    ):
+        if name == "미응대":
+            continue
+        ph = phone[(phone["상담사명"] == name) & (phone["응대여부"] == "응대")] if not phone.empty else pd.DataFrame()
+        ch = chat[(chat["상담사명"]   == name) & (chat["응대여부"]  == "응대")] if not chat.empty  else pd.DataFrame()
+        bo = board[(board["상담사명"] == name) & (board["응대여부"] == "응대")] if not board.empty else pd.DataFrame()
+        rows.append({
+            "상담사명":  name,
+            "전화응대":  len(ph),
+            "채팅응대":  len(ch),
+            "게시판응답": len(bo),
+            "전화AHT평균": round(ph["AHT(초)"].mean(), 1) if not ph.empty else 0,
+            "채팅리드타임평균": round(ch["리드타임(초)"].mean(), 1) if not ch.empty else 0,
+            "게시판리드타임평균": round(bo["리드타임(초)"].mean(), 1) if not bo.empty else 0,
+        })
 
-    with t1:
-        sec("상담사별 채널 처리건수")
-        ph_ag = (phone[~phone["미응대"]].groupby("상담사명").size()
-                 .reset_index(name="전화") if len(phone)>0
-                 else pd.DataFrame(columns=["상담사명","전화"]))
-        ch_ag = (chat[~chat["미응대"]].groupby("상담사명").size()
-                 .reset_index(name="채팅") if len(chat)>0
-                 else pd.DataFrame(columns=["상담사명","채팅"]))
-        bo_ag = (board[~board["미응대"]].groupby("상담사명").size()
-                 .reset_index(name="게시판") if len(board)>0
-                 else pd.DataFrame(columns=["상담사명","게시판"]))
-        merged = (ph_ag.merge(ch_ag,on="상담사명",how="outer")
-                       .merge(bo_ag,on="상담사명",how="outer").fillna(0))
-        merged[["전화","채팅","게시판"]] = merged[["전화","채팅","게시판"]].astype(int)
-        merged["합계"] = merged["전화"]+merged["채팅"]+merged["게시판"]
-        merged = merged.sort_values("합계",ascending=False)
+    if not rows:
+        st.info("데이터가 없습니다.")
+        return
 
-        if len(merged)>0:
-            mlt = merged.head(20).melt(
-                id_vars="상담사명",value_vars=["전화","채팅","게시판"],
-                var_name="채널",value_name="건수")
-            fig = px.bar(mlt,x="상담사명",y="건수",color="채널",barmode="stack",
-                         color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"})
-            chart_cfg(fig,h=360)
-            st.plotly_chart(fig, use_container_width=True)
+    df_agent = pd.DataFrame(rows).sort_values("전화응대", ascending=False)
+    st.dataframe(df_agent, use_container_width=True, height=500)
 
-            sec(f"전화 처리건수 추이 ({unit}) — Top5")
-            top5   = merged.head(5)["상담사명"].tolist()
-            cutoff = get_chart_range(unit,month_range)
-            pc     = get_period_col(unit)
-            fig2   = go.Figure()
-            cmap   = make_color_map(top5)
-            for ag_name in top5:
-                if len(phone)==0: break
-                sub = phone[(~phone["미응대"])&(phone["상담사명"]==ag_name)&
-                            (phone["일자"]>=pd.Timestamp(cutoff))]
-                if pc not in sub.columns or len(sub)==0: continue
-                s = sub.groupby(pc).size().reset_index(name="건수")
-                fig2.add_trace(go.Scatter(
-                    x=s[pc],y=s["건수"],mode="lines+markers",name=ag_name,
-                    line=dict(color=cmap.get(ag_name,"#888"),width=2),marker=dict(size=6)))
-            chart_cfg(fig2,h=300)
-            fig2.update_layout(hovermode="x unified")
-            st.plotly_chart(fig2, use_container_width=True)
-
-            with st.expander("상담사별 채널 처리 테이블",expanded=False):
-                compact_table(merged, height=360)
-
-    with t2:
-        if all("근속그룹" in df.columns for df in [phone,chat,board]):
-            sec("근속그룹별 채널 처리 현황")
-            ph_tg = (phone[~phone["미응대"]].groupby("근속그룹").size()
-                     .reset_index(name="전화") if len(phone)>0
-                     else pd.DataFrame(columns=["근속그룹","전화"]))
-            ch_tg = (chat[~chat["미응대"]].groupby("근속그룹").size()
-                     .reset_index(name="채팅") if len(chat)>0
-                     else pd.DataFrame(columns=["근속그룹","채팅"]))
-            bo_tg = (board[~board["미응대"]].groupby("근속그룹").size()
-                     .reset_index(name="게시판") if len(board)>0
-                     else pd.DataFrame(columns=["근속그룹","게시판"]))
-            tg_all = (ph_tg.merge(ch_tg,on="근속그룹",how="outer")
-                           .merge(bo_tg,on="근속그룹",how="outer").fillna(0))
-            tg_all[["전화","채팅","게시판"]] = tg_all[["전화","채팅","게시판"]].astype(int)
-            order = [g for _,g in TENURE_GROUPS]
-            tg_all["순서"] = tg_all["근속그룹"].apply(lambda x: order.index(x) if x in order else 99)
-            tg_all = tg_all.sort_values("순서")
-            mlt2 = tg_all.melt(id_vars="근속그룹",value_vars=["전화","채팅","게시판"],
-                                var_name="채널",value_name="건수")
-            fig3 = px.bar(mlt2,x="근속그룹",y="건수",color="채널",barmode="group",
-                          color_discrete_map={"전화":"#3b82f6","채팅":"#22c55e","게시판":"#f97316"})
-            chart_cfg(fig3,h=320)
-            st.plotly_chart(fig3, use_container_width=True)
-            compact_table(tg_all.drop(columns=["순서"]),height=260)
-        else:
-            st.info("근속그룹 정보가 없습니다.")
+    # 채널 분포 상위 10명
+    st.markdown('<div class="section-title">상담사별 채널 분포 (상위 10)</div>', unsafe_allow_html=True)
+    top10 = df_agent.head(10)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="전화", x=top10["상담사명"], y=top10["전화응대"],
+                         marker_color=COLORS["phone"]))
+    fig.add_trace(go.Bar(name="채팅", x=top10["상담사명"], y=top10["채팅응대"],
+                         marker_color=COLORS["chat"]))
+    fig.add_trace(go.Bar(name="게시판", x=top10["상담사명"], y=top10["게시판응답"],
+                         marker_color=COLORS["board"]))
+    fig.update_layout(barmode="stack", **base_layout(360, "상담사별 채널 분포"))
+    st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# SIDEBAR
+# 사이드바
 # ─────────────────────────────────────────────
-def render_sidebar(phone, chat, board):
+def render_sidebar(phone_raw, chat_raw, board_raw):
     with st.sidebar:
         st.markdown("""
-        <div style="text-align:center;padding:6px 0 14px">
-            <div style="font-size:16px;font-weight:800;color:#fff;letter-spacing:0.5px">
-                Contact Center OPS</div>
-            <div style="font-size:10px;color:#7a9cc6;margin-top:2px">
-                운영 분석 대시보드</div>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("---")
+        <div style="padding:20px 16px 12px;border-bottom:1px solid #334155;margin-bottom:16px;">
+            <div style="font-size:16px;font-weight:800;color:#f1f5f9;letter-spacing:-0.5px;">
+                CC OPS
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">Contact Center Analytics</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.markdown('<span class="sb-group">데이터</span>', unsafe_allow_html=True)
-        if st.button("데이터 새로고침", key="refresh"):
-            st.cache_data.clear(); st.rerun()
-        st.markdown("---")
+        if st.button("데이터 새로고침"):
+            st.cache_data.clear()
+            st.rerun()
 
-        st.markdown('<span class="sb-group">기간 단위</span>', unsafe_allow_html=True)
-        unit = st.radio("", ["일별","주별","월별"],
-                        horizontal=True, key="unit", label_visibility="collapsed")
+        st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+
+        # 기간 단위
+        unit = st.radio("기간 단위", ["일별", "주별", "월별"], horizontal=True)
+
+        # 월별 추이 범위
         month_range = 3
-        if unit=="월별":
-            month_range = st.slider("추이 표시 개월 수",1,6,3,key="mrange")
-        st.markdown("---")
+        if unit == "월별":
+            month_range = st.slider("추이 범위 (개월)", 1, 6, 3)
 
-        all_dates = pd.concat([
-            phone["일자"] if len(phone)>0 else pd.Series(dtype="datetime64[ns]"),
-            chat["일자"]  if len(chat)>0  else pd.Series(dtype="datetime64[ns]"),
-            board["일자"] if len(board)>0 else pd.Series(dtype="datetime64[ns]"),
-        ]).dropna()
+        # 날짜 범위
+        today = date.today()
+        st.markdown('<div style="margin-top:12px;font-size:11px;color:#94a3b8;font-weight:600;">날짜 범위</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("7일"):
+                st.session_state["date_start"] = today - timedelta(days=6)
+                st.session_state["date_end"]   = today
+        with col2:
+            if st.button("30일"):
+                st.session_state["date_start"] = today - timedelta(days=29)
+                st.session_state["date_end"]   = today
+        col3, col4 = st.columns(2)
+        with col3:
+            if st.button("이번달"):
+                st.session_state["date_start"] = today.replace(day=1)
+                st.session_state["date_end"]   = today
+        with col4:
+            if st.button("전체"):
+                st.session_state["date_start"] = date(2024, 1, 1)
+                st.session_state["date_end"]   = today
 
-        if len(all_dates)==0:
-            min_d = max_d = datetime.today().date()
-        else:
-            min_d = all_dates.min().date()
-            max_d = all_dates.max().date()
-
-        st.markdown('<span class="sb-group">날짜 필터</span>', unsafe_allow_html=True)
-        qc1,qc2,qc3 = st.columns(3)
-        with qc1:
-            if st.button("7일",key="q7"):
-                st.session_state["_ps"]=max_d-timedelta(days=6)
-                st.session_state["_pe"]=max_d
-                st.session_state["_dv"]=st.session_state.get("_dv",0)+1
-        with qc2:
-            if st.button("30일",key="q30"):
-                st.session_state["_ps"]=max_d-timedelta(days=29)
-                st.session_state["_pe"]=max_d
-                st.session_state["_dv"]=st.session_state.get("_dv",0)+1
-        with qc3:
-            if st.button("전체",key="qall"):
-                st.session_state["_ps"]=min_d
-                st.session_state["_pe"]=max_d
-                st.session_state["_dv"]=st.session_state.get("_dv",0)+1
-
-        ver = st.session_state.get("_dv",0)
-        ps  = st.session_state.get("_ps",min_d)
-        pe  = st.session_state.get("_pe",max_d)
-        ps  = max(min_d,min(max_d,ps))
-        pe  = max(min_d,min(max_d,pe))
-        if ps>pe: ps=pe
-
-        d_start = st.date_input("시작일",value=ps,min_value=min_d,max_value=max_d,key=f"ds_{ver}")
-        d_end   = st.date_input("종료일",value=pe,min_value=min_d,max_value=max_d,key=f"de_{ver}")
-        st.markdown("---")
+        date_start = st.date_input("시작일", value=st.session_state.get("date_start", today - timedelta(days=29)))
+        date_end   = st.date_input("종료일", value=st.session_state.get("date_end", today))
 
         # 사업자 필터
-        st.markdown('<span class="sb-group">사업자 필터</span>', unsafe_allow_html=True)
-        all_biz = sorted(set(
-            (phone["사업자명"].replace("",np.nan).dropna().unique().tolist() if len(phone)>0 else []) +
-            (chat["사업자명"].replace("",np.nan).dropna().unique().tolist()  if len(chat)>0  else []) +
-            (board["사업자명"].replace("",np.nan).dropna().unique().tolist() if len(board)>0 else [])
+        all_ops = sorted(set(
+            list(phone_raw["사업자명"].dropna().unique() if "사업자명" in phone_raw.columns else []) +
+            list(chat_raw["사업자명"].dropna().unique()  if "사업자명" in chat_raw.columns  else []) +
+            list(board_raw["사업자명"].dropna().unique() if "사업자명" in board_raw.columns else [])
         ))
-        sel_biz = st.multiselect("사업자", all_biz, default=[],
-                                  key="sbiz", placeholder="미선택 = 전체")
+        st.markdown('<div style="margin-top:12px;font-size:11px;color:#94a3b8;font-weight:600;">사업자</div>', unsafe_allow_html=True)
+        sel_ops = st.multiselect("사업자 선택", all_ops, default=[], label_visibility="collapsed")
 
         # 브랜드 필터
-        st.markdown('<span class="sb-group">브랜드 필터</span>', unsafe_allow_html=True)
         all_brands = sorted(set(
-            (phone["브랜드"].replace("",np.nan).dropna().unique().tolist() if len(phone)>0 else []) +
-            (chat["브랜드"].replace("",np.nan).dropna().unique().tolist()  if len(chat)>0  else []) +
-            (board["브랜드"].replace("",np.nan).dropna().unique().tolist() if len(board)>0 else [])
+            list(phone_raw["브랜드"].dropna().unique() if "브랜드" in phone_raw.columns else []) +
+            list(chat_raw["브랜드"].dropna().unique()  if "브랜드" in chat_raw.columns  else []) +
+            list(board_raw["브랜드"].dropna().unique() if "브랜드" in board_raw.columns else [])
         ))
-        sel_brands = st.multiselect("브랜드", all_brands, default=[],
-                                     key="sb", placeholder="미선택 = 전체")
-        st.markdown("---")
+        st.markdown('<div style="margin-top:12px;font-size:11px;color:#94a3b8;font-weight:600;">브랜드</div>', unsafe_allow_html=True)
+        sel_brands = st.multiselect("브랜드 선택", all_brands, default=[], label_visibility="collapsed")
 
-        if "menu" not in st.session_state:
-            st.session_state.menu = "전체 현황"
-
+        # 메뉴
+        st.markdown('<div style="height:16px;border-top:1px solid #334155;margin-top:16px;padding-top:16px;font-size:11px;color:#94a3b8;font-weight:600;">메뉴</div>', unsafe_allow_html=True)
+        menu = st.session_state.get("menu", "전체 현황")
         for group, items in MENU_GROUPS.items():
-            st.markdown(f'<span class="sb-group">{group}</span>', unsafe_allow_html=True)
-            for name in items:
-                if st.button(name, key=f"m_{name}"):
-                    st.session_state.menu = name
+            for item in items:
+                selected = "✦ " if menu == item else ""
+                if st.button(f"{selected}{item}", key=f"menu_{item}"):
+                    st.session_state["menu"] = item
                     st.rerun()
 
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align:center">
-            <span style="font-size:9px;color:#4a6fa5">Contact Center OPS v1.3</span>
-        </div>""", unsafe_allow_html=True)
-
-    return d_start, d_end, sel_brands, sel_biz, unit, month_range
+    return unit, month_range, date_start, date_end, sel_ops, sel_brands
 
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
 def main():
-    agent_df = load_agent()
-    phone_df = load_phone()
-    chat_df  = load_chat()
-    board_df = load_board()
+    # 데이터 로드
+    agent_raw = load_agent()
+    phone_raw = load_phone()
+    chat_raw  = load_chat()
+    board_raw = load_board()
 
-    if all(len(df)==0 for df in [phone_df,chat_df,board_df]):
+    # 사이드바
+    unit, month_range, date_start, date_end, sel_ops, sel_brands = render_sidebar(phone_raw, chat_raw, board_raw)
+
+    # 에이전트 병합
+    base_date = datetime.now().date()
+    phone_m = merge_agent(phone_raw, agent_raw, base_date)
+    chat_m  = merge_agent(chat_raw,  agent_raw, base_date)
+    board_m = merge_agent(board_raw, agent_raw, base_date)
+
+    # 필터 적용
+    phone_f = filter_df(phone_m, date_start, date_end, sel_brands or None, sel_ops or None)
+    chat_f  = filter_df(chat_m,  date_start, date_end, sel_brands or None, sel_ops or None)
+    board_f = filter_df(board_m, date_start, date_end, sel_brands or None, sel_ops or None)
+
+    # 데이터 없을 때
+    if all(len(df) == 0 for df in [phone_f, chat_f, board_f]):
         st.markdown("""
-        <div style="text-align:center;padding:80px 40px;background:#fff;
-                    border-radius:20px;margin:40px auto;max-width:500px;
-                    box-shadow:0 2px 12px rgba(0,0,0,.06)">
-            <div style="font-size:20px;font-weight:800;color:#0f172a;margin-bottom:8px">
-                데이터 연결 필요</div>
-            <div style="font-size:13px;color:#64748b;margin-bottom:4px">
-                Google Sheets GID 설정을 확인해주세요</div>
-            <div style="font-size:12px;color:#94a3b8">
-                SHEET_ID와 GID_MAP이 올바르게 설정되면 자동으로 로드됩니다</div>
-        </div>""", unsafe_allow_html=True)
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                    height:60vh;text-align:center;gap:12px;">
+            <div style="font-size:48px;">📊</div>
+            <div style="font-size:20px;font-weight:800;color:#0f172a;">데이터 연결 필요</div>
+            <div style="font-size:13px;color:#64748b;">Google Sheets에 데이터를 입력하거나 필터 조건을 확인해주세요.</div>
+            <div style="font-size:11px;color:#94a3b8;background:#f1f5f9;padding:8px 16px;border-radius:8px;">
+                SHEET_ID 및 GID_MAP 설정을 확인하세요
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
-    base_date = datetime.today()
-    phone_df  = merge_agent(phone_df, agent_df, base_date)
-    chat_df   = merge_agent(chat_df,  agent_df, base_date)
-    board_df  = merge_agent(board_df, agent_df, base_date)
+    # 메뉴 라우팅
+    menu = st.session_state.get("menu", "전체 현황")
 
-    d_start, d_end, sel_brands, sel_biz, unit, month_range = render_sidebar(
-        phone_df, chat_df, board_df)
+    if   menu == "전체 현황":     page_overview(phone_f, chat_f, board_f, unit, month_range, date_start, date_end)
+    elif menu == "사업자 현황":   page_operator(phone_f, chat_f, board_f, unit, month_range)
+    elif menu == "전화 현황":     page_phone(phone_f, unit, month_range, date_start, date_end)
+    elif menu == "전화 상담사":   page_phone_agent(phone_f, unit, month_range)
+    elif menu == "채팅 현황":     page_chat(chat_f, unit, month_range, date_start, date_end)
+    elif menu == "채팅 상담사":   page_chat_agent(chat_f, unit, month_range)
+    elif menu == "게시판 현황":   page_board(board_f, unit, month_range, date_start, date_end)
+    elif menu == "게시판 상담사": page_board_agent(board_f, unit, month_range)
+    elif menu == "상담사 종합":   page_agent_total(phone_f, chat_f, board_f)
 
-    phone_f = filter_df(phone_df, (d_start,d_end), sel_brands, sel_biz)
-    chat_f  = filter_df(chat_df,  (d_start,d_end), sel_brands, sel_biz)
-    board_f = filter_df(board_df, (d_start,d_end), sel_brands, sel_biz)
-
-    menu = st.session_state.get("menu","전체 현황")
-
-    if   menu=="전체 현황":     page_overview(phone_f,chat_f,board_f,unit,month_range)
-    elif menu=="사업자 현황":   page_biz(phone_f,chat_f,board_f,unit,month_range)
-    elif menu=="전화 현황":     page_phone(phone_f,unit,month_range)
-    elif menu=="전화 상담사":   page_phone_agent(phone_f,unit,month_range)
-    elif menu=="채팅 현황":     page_chat(chat_f,unit,month_range)
-    elif menu=="채팅 상담사":   page_chat_agent(chat_f,unit,month_range)
-    elif menu=="게시판 현황":   page_board(board_f,unit,month_range)
-    elif menu=="게시판 상담사": page_board_agent(board_f,unit,month_range)
-    elif menu=="상담사 종합":   page_agent_total(phone_f,chat_f,board_f,unit,month_range)
-
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
-
-
