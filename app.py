@@ -1944,7 +1944,6 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             </div>
         </div>""", unsafe_allow_html=True)
 
-        # 새로고침
         if st.button("🔄  데이터 새로고침", key="btn_refresh"):
             st.cache_data.clear()
             st.rerun()
@@ -1953,12 +1952,14 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
 
         # 기간 단위
         st.markdown(
-            "<div style='font-size:10.5px;color:rgba(148,163,184,0.9);font-weight:800;"
-            "margin-bottom:4px;'>기간 단위</div>",
+            "<div style='font-size:10.5px;color:rgba(148,163,184,0.9);"
+            "font-weight:800;margin-bottom:4px;'>기간 단위</div>",
             unsafe_allow_html=True
         )
-        unit = st.radio("기간 단위", ["일별","주별","월별"], horizontal=True,
-                        label_visibility="collapsed")
+        unit = st.radio(
+            "기간 단위", ["일별","주별","월별"],
+            horizontal=True, label_visibility="collapsed"
+        )
         month_range = 3
         if unit == "월별":
             month_range = st.slider("추이 범위(개월)", 1, 6, 3)
@@ -2011,7 +2012,10 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             "font-weight:800;margin-bottom:4px;'>사업자 필터</div>",
             unsafe_allow_html=True
         )
-        sel_ops = st.multiselect("사업자", all_ops, default=[], label_visibility="collapsed", key="sel_ops")
+        sel_ops = st.multiselect(
+            "사업자", all_ops, default=[],
+            label_visibility="collapsed", key="sel_ops"
+        )
 
         # 브랜드 필터
         all_brands = sorted(set(
@@ -2020,17 +2024,21 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             list(board_raw["브랜드"].dropna().unique() if "브랜드" in board_raw.columns else [])
         ))
         st.markdown(
-            "<div style='margin-top:10px
-;font-size:10.5px;color:rgba(148,163,184,0.9);"
+            "<div style='margin-top:10px;font-size:10.5px;color:rgba(148,163,184,0.9);"
             "font-weight:800;margin-bottom:4px;'>브랜드 필터</div>",
             unsafe_allow_html=True
         )
-        sel_brands = st.multiselect("브랜드", all_brands, default=[], label_visibility="collapsed", key="sel_brands")
+        sel_brands = st.multiselect(
+            "브랜드", all_brands, default=[],
+            label_visibility="collapsed", key="sel_brands"
+        )
 
         # 메뉴 네비게이션
         st.markdown("""
-        <div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);
-                    font-size:10.5px;color:rgba(148,163,184,0.9);font-weight:800;margin-bottom:8px;">
+        <div style="margin-top:16px;padding-top:14px;
+                    border-top:1px solid rgba(255,255,255,0.07);
+                    font-size:10.5px;color:rgba(148,163,184,0.9);
+                    font-weight:800;margin-bottom:8px;">
             메뉴 네비게이션
         </div>""", unsafe_allow_html=True)
 
@@ -2038,24 +2046,25 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
 
         for group, items in MENU_GROUPS.items():
             st.markdown(
-                f"<div style='margin:10px 0 5px;font-size:10px;color:rgba(148,163,184,0.55);"
-                f"font-weight:900;text-transform:uppercase;letter-spacing:.5px;'>{group}</div>",
+                f"<div style='margin:10px 0 5px;font-size:10px;"
+                f"color:rgba(148,163,184,0.55);font-weight:900;"
+                f"text-transform:uppercase;letter-spacing:.5px;'>{group}</div>",
                 unsafe_allow_html=True
             )
             for item in items:
                 is_active = (menu == item)
                 wrap_cls  = "sidebar-active" if is_active else ""
                 icon_map  = {
-                    "전체 현황":    "🏠",
-                    "VOC 인입 분석":"📋",
-                    "사업자 현황":  "🏢",
-                    "전화 현황":    "📞",
-                    "전화 상담사":  "👤",
-                    "채팅 현황":    "💬",
-                    "채팅 상담사":  "👤",
-                    "게시판 현황":  "📝",
-                    "게시판 상담사":"👤",
-                    "상담사 종합":  "📊",
+                    "전체 현황":     "🏠",
+                    "VOC 인입 분석": "📋",
+                    "사업자 현황":   "🏢",
+                    "전화 현황":     "📞",
+                    "전화 상담사":   "👤",
+                    "채팅 현황":     "💬",
+                    "채팅 상담사":   "👤",
+                    "게시판 현황":   "📝",
+                    "게시판 상담사": "👤",
+                    "상담사 종합":   "📊",
                 }
                 icon  = icon_map.get(item, "•")
                 label = f"{icon} {item}"
@@ -2069,7 +2078,6 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
         st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
 
     return unit, month_range, date_start, date_end, sel_ops, sel_brands
-
 
 # ══════════════════════════════════════════════
 # MAIN
