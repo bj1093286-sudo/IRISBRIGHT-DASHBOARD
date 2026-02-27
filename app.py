@@ -398,7 +398,12 @@ div[data-testid="stToolbar"] { display: none !important; }
 # ══════════════════════════════════════════════
 # 한국 공휴일
 # ══════════════════════════════════════════════
-KR_HOLIDAYS = holidays.KR()
+def get_kr_holidays():
+    today = date.today()
+    yr = today.year
+    return holidays.KR(years=[yr-1, yr, yr+1], observed=True)
+
+KR_HOLIDAYS = get_kr_holidays()
 
 # ══════════════════════════════════════════════
 # 유틸
@@ -569,7 +574,9 @@ def ensure_seconds_col(df, col):
 def is_business_day(d: date) -> bool:
     if d.weekday() >= 5:
         return False
-    return d not in KR_HOLIDAYS
+    if d in KR_HOLIDAYS:
+        return False
+    return True
 
 def overlap_seconds(a_s: datetime, a_e: datetime, b_s: datetime, b_e: datetime) -> float:
     start = max(a_s, b_s)
@@ -1537,22 +1544,43 @@ def page_phone(phone, unit, month_range, start, end):
         card_close()
 
     # 시간대별
+    # 시간대별
     section_title("시간대별 인입 / 응대 현황")
-    hourly = phone.groupby("인입시간대").agg(
-        인입=("인입시간대","count"),
+    
+    # ✅ 분 단위 선택 추가
+    min_unit = st.radio("시간 단위", [5, 10, 30, 60], index=3, horizontal=True,
+                        format_func=lambda x: f"{x}분", key="phone_min_unit")
+
+    df_time = phone.copy()
+    df_time = df_time[df_time["인입시각"].notna()].copy()
+
+    if min_unit == 60:
+        df_time["시간대"] = df_time["인입시각"].dt.hour
+        x_label = "시간대(시)"
+    else:
+        df_time["시간대"] = (
+            df_time["인입시각"].dt.hour * 60 + df_time["인입시각"].dt.minute
+        ) // min_unit * min_unit
+        df_time["시간대"] = df_time["시간대"].apply(
+            lambda x: f"{x//60:02d}:{x%60:02d}"
+        )
+        x_label = f"시간대({min_unit}분 단위)"
+
+    hourly = df_time.groupby("시간대").agg(
+        인입=("시간대", "count"),
         응대=("응대여부", lambda x: (x=="응대").sum()),
     ).reset_index()
     hourly["미응대"] = hourly["인입"] - hourly["응대"]
     hourly["응대율"] = (hourly["응대"] / hourly["인입"] * 100).round(1)
 
-    card_open("시간대별 인입/응대 + 응대율")
+    card_open(f"시간대별 인입/응대 + 응대율 ({min_unit}분 단위)")
     fig3 = go.Figure()
-    fig3.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["응대"],   name="응대",   marker_color=COLORS["phone"]))
-    fig3.add_trace(go.Bar(x=hourly["인입시간대"], y=hourly["미응대"], name="미응대", marker_color=hex_rgba(COLORS["danger"],0.7)))
+    fig3.add_trace(go.Bar(x=hourly["시간대"], y=hourly["응대"],   name="응대",   marker_color=COLORS["phone"]))
+    fig3.add_trace(go.Bar(x=hourly["시간대"], y=hourly["미응대"], name="미응대", marker_color=hex_rgba(COLORS["danger"],0.7)))
     fig3.add_trace(go.Scatter(
-        x=hourly["인입시간대"], y=hourly["응대율"], name="응대율(%)",
+        x=hourly["시간대"], y=hourly["응대율"], name="응대율(%)",
         yaxis="y2", mode="lines+markers",
-        line=dict(color=COLORS["warning"],width=2), marker=dict(size=6)
+        line=dict(color=COLORS["warning"], width=2), marker=dict(size=6)
     ))
     fig3.update_layout(
         **base_layout(320,""), barmode="stack",
