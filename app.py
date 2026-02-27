@@ -1609,73 +1609,101 @@ def page_phone(phone, unit, month_range, start, end):
 # ══════════════════════════════════════════════
 def page_phone_agent(phone, unit, month_range):
     if phone.empty:
-        st.info("전화 데이터가 없습니다."); return
+        st.info("전화 데이터가 없습니다.")
+        return
     resp = phone[phone["응대여부"]=="응대"]
     if resp.empty:
-        st.info("응대 데이터가 없습니다."); return
+        st.info("응대 데이터가 없습니다.")
+        return
 
     section_title("상담사별 전화 성과")
-	ag = resp.groupby("상담사명").agg(
-   	 응대수=("상담사명",    "count"),
-    	평균대기=("대기시간(초)", "mean"),
-   	 평균ATT=("통화시간(초)", "mean"),   # G열
-   	 평균ACW=("ACW시간(초)",  "mean"),   # H열
-	).reset_index().sort_values("응대수", ascending=False)
 
-	# ✅ AHT = ATT + ACW 직접 계산
-	ag["평균AHT"] = ag["평균ATT"] + ag["평균ACW"]
+    ag = resp.groupby("상담사명").agg(
+        응대수=("상담사명", "count"),
+        평균대기=("대기시간(초)", "mean"),
+        평균ATT=("통화시간(초)", "mean"),
+        평균ACW=("ACW시간(초)", "mean"),
+    ).reset_index().sort_values("응대수", ascending=False)
 
-	for c in ["평균대기","평균ATT","평균ACW","평균AHT"]:
-   	 ag[c+"_표시"] = ag[c].apply(fmt_hms)
+    ag["평균AHT"] = ag["평균ATT"] + ag["평균ACW"]
 
-	card_open("상담사별 성과 테이블", "ATT=통화시간(G열) / ACW=후처리(H열) / AHT=ATT+ACW")
-	st.dataframe(
-   	 ag[["상담사명","응대수",
-      	  "평균대기_표시","평균ATT_표시","평균ACW_표시","평균AHT_표시"]].rename(columns={
-       	 "평균대기_표시": "평균 대기",
-      	  "평균ATT_표시":  "평균 ATT",
-       	 "평균ACW_표시":  "평균 ACW",
-       	 "평균AHT_표시":  "평균 AHT",
-	    }),
-   	 use_container_width=True, height=400
-	)
-	card_close()
+    for c in ["평균대기", "평균ATT", "평균ACW", "평균AHT"]:
+        ag[c+"_표시"] = ag[c].apply(fmt_hms)
+
+    card_open("상담사별 성과 테이블", "ATT=통화시간(G열) / ACW=후처리(H열) / AHT=ATT+ACW")
+    st.dataframe(
+        ag[["상담사명","응대수",
+            "평균대기_표시","평균ATT_표시","평균ACW_표시","평균AHT_표시"]].rename(columns={
+            "평균대기_표시": "평균 대기",
+            "평균ATT_표시":  "평균 ATT",
+            "평균ACW_표시":  "평균 ACW",
+            "평균AHT_표시":  "평균 AHT",
+        }),
+        use_container_width=True,
+        height=400
+    )
+    card_close()
 
     c1, c2 = st.columns(2)
     with c1:
         if "팀명" in resp.columns:
             section_title("팀별 평균 AHT")
             tm = resp.groupby("팀명").agg(
-                응대수=("팀명","count"), 평균AHT=("AHT(초)","mean")
-            ).round(1).reset_index()
+                응대수=("팀명", "count"),
+                평균ATT=("통화시간(초)", "mean"),
+                평균ACW=("ACW시간(초)", "mean"),
+            ).reset_index()
+            tm["평균AHT"] = tm["평균ATT"] + tm["평균ACW"]
             card_open("팀별 평균 AHT (초)")
-            fig = px.bar(tm, x="팀명", y="평균AHT", color_discrete_sequence=[COLORS["primary"]])
-            fig.update_layout(**base_layout(300,""))
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=tm["팀명"], y=tm["평균ATT"],
+                name="ATT", marker_color=COLORS["primary"]
+            ))
+            fig.add_trace(go.Bar(
+                x=tm["팀명"], y=tm["평균ACW"],
+                name="ACW", marker_color=COLORS["warning"]
+            ))
+            fig.update_layout(barmode="stack", **base_layout(300, ""))
             st.plotly_chart(fig, use_container_width=True)
             card_close()
+
     with c2:
         if "근속그룹" in resp.columns:
             section_title("근속그룹별 AHT")
             tg = resp.groupby("근속그룹").agg(
-                응대수=("근속그룹","count"), 평균AHT=("AHT(초)","mean")
-            ).round(1).reset_index()
+                응대수=("근속그룹", "count"),
+                평균ATT=("통화시간(초)", "mean"),
+                평균ACW=("ACW시간(초)", "mean"),
+            ).reset_index()
+            tg["평균AHT"] = tg["평균ATT"] + tg["평균ACW"]
             card_open("근속그룹별 평균 AHT (초)")
-            fig2 = px.bar(tg, x="근속그룹", y="평균AHT",
-                          color_discrete_sequence=[COLORS["info"]])
-            fig2.update_layout(**base_layout(300,""))
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(
+                x=tg["근속그룹"], y=tg["평균ATT"],
+                name="ATT", marker_color=COLORS["primary"]
+            ))
+            fig2.add_trace(go.Bar(
+                x=tg["근속그룹"], y=tg["평균ACW"],
+                name="ACW", marker_color=COLORS["warning"]
+            ))
+            fig2.update_layout(barmode="stack", **base_layout(300, ""))
             st.plotly_chart(fig2, use_container_width=True)
             card_close()
 
-    # 상담사별 AHT 분포 (top 20)
     section_title("상담사별 AHT 분포 (상위 20)")
     top20 = ag.head(20)
-    card_open("상담사별 평균 AHT (초)")
-    fig3 = px.bar(
-        top20, x="평균AHT", y="상담사명", orientation="h",
-        color="평균AHT",
-        color_continuous_scale=["#e0e7ff","#6366f1","#312e81"]
-    )
-    fig3.update_layout(**base_layout(420,""))
+    card_open("상담사별 평균 AHT (ATT+ACW 스택)")
+    fig3 = go.Figure()
+    fig3.add_trace(go.Bar(
+        x=top20["상담사명"], y=top20["평균ATT"],
+        name="ATT (통화시간)", marker_color=COLORS["primary"]
+    ))
+    fig3.add_trace(go.Bar(
+        x=top20["상담사명"], y=top20["평균ACW"],
+        name="ACW (후처리)", marker_color=COLORS["warning"]
+    ))
+    fig3.update_layout(barmode="stack", **base_layout(380, ""))
     st.plotly_chart(fig3, use_container_width=True)
     card_close()
 
