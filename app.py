@@ -2133,6 +2133,7 @@ def page_board(board, unit, month_range, start, end):
 def page_board_agent(board, unit, month_range):
     if board.empty:
         st.info("게시판 데이터가 없습니다."); return
+    board = board[~board["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     resp = board[board["응대여부"]=="응대"]
     board = board[~board["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     if resp.empty:
