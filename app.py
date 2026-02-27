@@ -37,6 +37,7 @@ MENU_GROUPS = {
     "게시판":["게시판 현황","게시판 상담사"],
     "상담사":["상담사 종합"],
 }
+EXCLUDE_AGENTS = {"이은덕", "양현정", "이혜선", "한인경", "박성주", "엄소라"}
 
 # ══════════════════════════════════════════════
 # 페이지 설정
@@ -1636,6 +1637,7 @@ def page_phone_agent(phone, unit, month_range):
     if phone.empty:
         st.info("전화 데이터가 없습니다.")
         return
+    phone = phone[~phone["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     resp = phone[phone["응대여부"]=="응대"]
     if resp.empty:
         st.info("응대 데이터가 없습니다.")
@@ -1859,6 +1861,7 @@ def page_chat_agent(chat, unit, month_range):
     if chat.empty:
         st.info("채팅 데이터가 없습니다."); return
     resp = chat[chat["응대여부"]=="응대"]
+    chat = chat[~chat["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     if resp.empty:
         st.info("응대 데이터가 없습니다."); return
 
@@ -2073,6 +2076,7 @@ def page_board_agent(board, unit, month_range):
     if board.empty:
         st.info("게시판 데이터가 없습니다."); return
     resp = board[board["응대여부"]=="응대"]
+    board = board[~board["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     if resp.empty:
         st.info("응답 데이터가 없습니다."); return
 
@@ -2156,7 +2160,9 @@ def page_board_agent(board, unit, month_range):
 # ══════════════════════════════════════════════
 def page_agent_total(phone, chat, board):
     section_title("상담사 종합 성과")
-
+    if not phone.empty: phone = phone[~phone["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+    if not chat.empty:  chat  = chat[~chat["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+    if not board.empty: board = board[~board["상담사명"].isin(EXCLUDE_AGENTS)].copy()
     names = set()
     if not phone.empty: names.update(phone["상담사명"].dropna().unique())
     if not chat.empty:  names.update(chat["상담사명"].dropna().unique())
