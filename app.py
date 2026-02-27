@@ -519,7 +519,7 @@ def parse_duration_seconds(v):
     s = str(v).strip()
     if s == "" or s.lower() in {"nan","none","null","-",""}:
         return 0.0
-    # 순수 숫자 문자열
+    # 순수 숫자
     try:
         return float(s)
     except:
@@ -529,24 +529,32 @@ def parse_duration_seconds(v):
         return 0.0
     parts = s.split(":")
     parts = [p.strip() for p in parts if p.strip() != ""]
-    if len(parts) == 1:
-        try: return float(parts[0])
-        except: return 0.0
+
+    # ✅ H:MM:SS (예: 0:04:57 → 297초)
+    if len(parts) == 3:
+        try:
+            h   = float(parts[0])
+            m   = float(parts[1])
+            sec = float(parts[2])
+            return h * 3600.0 + m * 60.0 + sec
+        except:
+            return 0.0
+
+    # ✅ MM:SS (예: 04:57 → 297초)
     if len(parts) == 2:
-        # MM:SS
         try:
             return float(parts[0]) * 60.0 + float(parts[1])
         except:
             return 0.0
-    # H:MM:SS (또는 그 이상)
-    try:
-        nums = [float(p) for p in parts]
-        h = 0.0
-        for x in nums[:-2]:
-            h = h * 60.0 + x
-        return h * 3600.0 + nums[-2] * 60.0 + nums[-1]
-    except:
-        return 0.0
+
+    # ✅ 단일값
+    if len(parts) == 1:
+        try:
+            return float(parts[0])
+        except:
+            return 0.0
+
+    return 0.0
 
 def ensure_seconds_col(df, col):
     if col not in df.columns:
@@ -554,7 +562,6 @@ def ensure_seconds_col(df, col):
         return df
     df[col] = df[col].apply(parse_duration_seconds).astype(float)
     return df
-
 # ══════════════════════════════════════════════
 # 게시판 근무내/근무외 리드타임 분리
 # ══════════════════════════════════════════════
