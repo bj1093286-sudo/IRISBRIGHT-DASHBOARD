@@ -795,15 +795,25 @@ def load_phone():
     try:
         df = pd.read_csv(gsheet_url(GID_MAP["phone"]))
         df.columns = df.columns.str.strip()
+
         df["일자"] = pd.to_datetime(df["일자"], errors="coerce")
         df["인입시각"] = pd.to_datetime(
             df["일자"].astype(str) + " " + df["인입시각"].astype(str),
             errors="coerce"
         )
-        # ✅ 각각 개별 파싱
-        df = ensure_seconds_col(df, "통화시간(초)")   # G열 = ATT
-        df = ensure_seconds_col(df, "ACW시간(초)")    # H열 = ACW
-        df["AHT(초)"] = df["통화시간(초)"] + df["ACW시간(초)"]  # ATT+ACW=AHT
+
+        # ✅ 모든 시간 컬럼 강제 파싱 (H:MM:SS → 초)
+        for col in df.columns:
+            if "(초)" in col:
+                df[col] = df[col].apply(parse_duration_seconds).astype(float)
+
+        # ✅ 혹시 컬럼명이 다를 경우 대비 - 있는 컬럼만 파싱
+        time_cols = ["대기시간(초)", "통화시간(초)", "ACW시간(초)"]
+        for col in time_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(parse_duration_seconds).astype(float)
+            else:
+                df[col] = 0.0
 
         # ✅ AHT = ATT + ACW
         df["AHT(초)"] = df["통화시간(초)"] + df["ACW시간(초)"]
@@ -813,6 +823,7 @@ def load_phone():
         )
         df["인입시간대"] = df["인입시각"].dt.hour
         return assign_period_cols(df, "일자")
+
     except Exception as e:
         st.error(f"전화 데이터 로드 오류: {e}")
         return pd.DataFrame(columns=[
@@ -1460,15 +1471,22 @@ def page_phone(phone, unit, month_range, start, end):
     if phone.empty:
         st.info("전화 데이터가 없습니다."); return
 
-    resp  = phone[phone["응대여부"]=="응대"]
+    resp = phone[phone["응대여부"]=="응대"]
     total = len(phone)
     rc    = len(resp)
     rr    = rc / total * 100 if total else 0
 
-    aw  = resp["대기시간(초)"].mean() if not resp.empty else 0  # 대기
-    att = resp["통화시간(초)"].mean() if not resp.empty else 0  # ATT = G열
-    acw = resp["ACW시간(초)"].mean()  if not resp.empty else 0  # ACW = H열
-    aht = att + acw                                              # AHT = ATT+ACW (직접 계산)
+    # ✅ 숫자형 강제 변환 후 mean() (이중 안전장치)
+    def safe_mean(series):
+        try:
+            return pd.to_numeric(series, errors="coerce").mean() or 0.0
+        except:
+            return 0.0
+
+    aw  = safe_mean(resp["대기시간(초)"])  if not resp.empty else 0
+    att = safe_mean(resp["통화시간(초)"])  if not resp.empty else 0
+    acw = safe_mean(resp["ACW시간(초)"])   if not resp.empty else 0
+    aht = att + acw                                  # AHT = ATT+ACW (직접 계산)
 
     # KPI
     c1,c2,c3,c4,c5,c6 = st.columns(6)
