@@ -1168,13 +1168,24 @@ def page_overview(phone, chat, board, unit, month_range, start, end,
     s_str = start.strftime("%Y.%m.%d") if hasattr(start,"strftime") else str(start)
     e_str = end.strftime("%Y.%m.%d")   if hasattr(end,  "strftime") else str(end)
 
+    period_days = (pd.Timestamp(end) - pd.Timestamp(start)).days + 1
+    prev_end    = pd.Timestamp(start) - timedelta(days=1)
+    prev_start  = prev_end - timedelta(days=period_days - 1)
+    ps_str = prev_start.strftime("%Y.%m.%d")
+    pe_str = prev_end.strftime("%Y.%m.%d")
+
     st.markdown(f"""
     <div class="dash-header">
       <div class="dash-header-left">
         <h1>📊 Contact Center Dashboard</h1>
         <span>Updated {updated}</span>
       </div>
-      <div><span class="dash-badge">{s_str} ~ {e_str}</span></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <span class="dash-badge">📅 현재: {s_str} ~ {e_str}</span>
+        <span class="dash-badge" style="background:rgba(148,163,184,0.1);color:#64748b;border-color:rgba(148,163,184,0.2);">
+            🔄 비교: {ps_str} ~ {pe_str}
+        </span>
+      </div>
     </div>""", unsafe_allow_html=True)
 
     # ── 현재 기간 집계
