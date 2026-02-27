@@ -500,8 +500,14 @@ def assign_period_cols(df, date_col="일자"):
     df = df.copy()
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     df["일자"] = df[date_col]
-    df["주차"] = df[date_col].dt.to_period("W").dt.start_time
-    df["월"]   = df[date_col].dt.to_period("M").dt.start_time
+    
+    # ✅ 주차 - Period 대신 직접 계산
+    df["주차"] = df[date_col] - pd.to_timedelta(df[date_col].dt.dayofweek, unit="D")
+    df["주차"] = pd.to_datetime(df["주차"].dt.date)
+    
+    # ✅ 월
+    df["월"] = pd.to_datetime(df[date_col].dt.to_period("M").dt.start_time)
+    
     return df
 
 def get_chart_range(unit, end_date, month_range=3):
