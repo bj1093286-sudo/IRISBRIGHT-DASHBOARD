@@ -47,6 +47,53 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ← 여기에 바로 붙여넣기
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: none !important;
+    width: 230px !important;
+    min-width: 230px !important;
+    position: relative !important;
+    left: 0 !important;
+    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
+}
+section[data-testid="stSidebar"] > div {
+    display: block !important;
+    visibility: visible !important;
+    width: 230px !important;
+}
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: all !important;
+    position: fixed !important;
+    left: 230px !important;
+    top: 50% !important;
+    z-index: 999999 !important;
+    background: #1e293b !important;
+    border-radius: 0 8px 8px 0 !important;
+    padding: 8px 4px !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+    border-left: none !important;
+    box-shadow: 3px 0 10px rgba(0,0,0,0.2) !important;
+}
+[data-testid="collapsedControl"] svg {
+    fill: #e2e8f0 !important;
+    color: #e2e8f0 !important;
+    width: 16px !important;
+    height: 16px !important;
+}
+[data-testid="collapsedControl"]:hover {
+    background: #6366f1 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
