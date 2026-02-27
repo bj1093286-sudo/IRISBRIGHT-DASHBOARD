@@ -801,9 +801,9 @@ def load_phone():
             errors="coerce"
         )
         # ✅ 각각 개별 파싱
-        df = ensure_seconds_col(df, "대기시간(초)")
-        df = ensure_seconds_col(df, "통화시간(초)")
-        df = ensure_seconds_col(df, "ACW시간(초)")
+        df = ensure_seconds_col(df, "통화시간(초)")   # G열 = ATT
+        df = ensure_seconds_col(df, "ACW시간(초)")    # H열 = ACW
+        df["AHT(초)"] = df["통화시간(초)"] + df["ACW시간(초)"]  # ATT+ACW=AHT
 
         # ✅ AHT = ATT + ACW
         df["AHT(초)"] = df["통화시간(초)"] + df["ACW시간(초)"]
@@ -1465,19 +1465,19 @@ def page_phone(phone, unit, month_range, start, end):
     rc    = len(resp)
     rr    = rc / total * 100 if total else 0
 
-    aw  = resp["대기시간(초)"].mean()  if not resp.empty else 0
-    att = resp["통화시간(초)"].mean()  if not resp.empty else 0
-    acw = resp["ACW시간(초)"].mean()   if not resp.empty else 0
-    aht = resp["AHT(초)"].mean()       if not resp.empty else 0
+    aw  = resp["대기시간(초)"].mean() if not resp.empty else 0  # 대기
+    att = resp["통화시간(초)"].mean() if not resp.empty else 0  # ATT = G열
+    acw = resp["ACW시간(초)"].mean()  if not resp.empty else 0  # ACW = H열
+    aht = att + acw                                              # AHT = ATT+ACW (직접 계산)
 
     # KPI
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    with c1: st.markdown(kpi_card("전체 인입",  fmt_num(total), unit="건"), unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("응대건수",   fmt_num(rc),    unit="건", accent="green"), unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("응대율",     fmt_pct(rr),    accent="blue"), unsafe_allow_html=True)
-    with c4: st.markdown(kpi_card("평균 대기",  fmt_hms(aw),    accent="orange"), unsafe_allow_html=True)
-    with c5: st.markdown(kpi_card("평균 ATT",   fmt_hms(att),   accent="blue"), unsafe_allow_html=True)
-    with c6: st.markdown(kpi_card("평균 AHT",   fmt_hms(aht),   accent="orange"), unsafe_allow_html=True)
+    with c1: st.markdown(kpi_card("전체 인입",  fmt_num(total), unit="건"),           unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("응대건수",   fmt_num(rc),    unit="건", accent="green"),  unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("응대율",     fmt_pct(rr),    accent="blue"),        unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("평균 ATT",   fmt_hms(att),   accent="blue"),        unsafe_allow_html=True)
+    with c5: st.markdown(kpi_card("평균 ACW",   fmt_hms(acw),   accent="orange"),      unsafe_allow_html=True)
+    with c6: st.markdown(kpi_card("평균 AHT",   fmt_hms(aht),   accent="green"),       unsafe_allow_html=True)
 
     # ★ 일별 추이 (KPI 바로 아래)
     render_daily_trends_block("phone", daily_trend_phone(phone))
@@ -1540,18 +1540,29 @@ def page_phone(phone, unit, month_range, start, end):
     if not resp.empty:
         section_title("AHT 구성 분석 (통화 + ACW)")
         aht_df = resp.groupby(pc).agg(
-            통화시간=("통화시간(초)","mean"),
-            ACW시간=("ACW시간(초)","mean")
+            ATT=("통화시간(초)", "mean"),   # G열
+            ACW=("ACW시간(초)",  "mean"),   # H열
         ).reset_index()
+	aht_df["AHT"] = aht_df["ATT"] + aht_df["ACW"]  # 합계
         c1, c2 = st.columns([2,1])
         with c1:
-            card_open("기간별 평균 AHT 구성(초)", f"기간 단위: {unit}")
-            fig4 = go.Figure()
-            fig4.add_trace(go.Bar(x=aht_df[pc], y=aht_df["통화시간"], name="통화시간(ATT)", marker_color=COLORS["primary"]))
-            fig4.add_trace(go.Bar(x=aht_df[pc], y=aht_df["ACW시간"],  name="ACW",           marker_color=COLORS["warning"]))
-            fig4.update_layout(barmode="stack", **base_layout(290,""))
-            st.plotly_chart(fig4, use_container_width=True)
-            card_close()
+	card_open("기간별 평균 AHT 구성", f"ATT(통화) + ACW = AHT")
+	fig4 = go.Figure()
+	fig4.add_trace(go.Bar(
+   	 x=aht_df[pc], y=aht_df["ATT"],
+    	name="ATT (통화시간)",
+   	 marker_color=COLORS["primary"],
+    	hovertemplate="%{x}<br>ATT: %{y:.0f}초<extra></extra>"
+	))
+	fig4.add_trace(go.Bar(
+   	 x=aht_df[pc], y=aht_df["ACW"],
+   	 name="ACW (후처리)",
+    	marker_color=COLORS["warning"],
+    	hovertemplate="%{x}<br>ACW: %{y:.0f}초<extra></extra>"
+	))
+	fig4.update_layout(barmode="stack", **base_layout(290,""))
+	st.plotly_chart(fig4, use_container_width=True)
+	card_close()
         with c2:
             card_open("평균 ACW 요약")
             st.markdown(kpi_card("평균 ACW", fmt_hms(acw), accent="orange"), unsafe_allow_html=True)
@@ -1599,28 +1610,31 @@ def page_phone_agent(phone, unit, month_range):
         st.info("응대 데이터가 없습니다."); return
 
     section_title("상담사별 전화 성과")
-    ag = resp.groupby("상담사명").agg(
-        응대수=("상담사명","count"),
-        평균대기=("대기시간(초)","mean"),
-        평균ATT=("통화시간(초)","mean"),
-        평균ACW=("ACW시간(초)","mean"),
-        평균AHT=("AHT(초)","mean"),
-    ).reset_index().sort_values("응대수", ascending=False)
+	ag = resp.groupby("상담사명").agg(
+   	 응대수=("상담사명",    "count"),
+    	평균대기=("대기시간(초)", "mean"),
+   	 평균ATT=("통화시간(초)", "mean"),   # G열
+   	 평균ACW=("ACW시간(초)",  "mean"),   # H열
+	).reset_index().sort_values("응대수", ascending=False)
 
-    for c in ["평균대기","평균ATT","평균ACW","평균AHT"]:
-        ag[c+"_표시"] = ag[c].apply(fmt_hms)
+	# ✅ AHT = ATT + ACW 직접 계산
+	ag["평균AHT"] = ag["평균ATT"] + ag["평균ACW"]
 
-    card_open("상담사별 성과 테이블", "시간값은 H:MM:SS 형식")
-    st.dataframe(
-        ag[["상담사명","응대수","평균대기_표시","평균ATT_표시","평균ACW_표시","평균AHT_표시"]].rename(columns={
-            "평균대기_표시":"평균 대기",
-            "평균ATT_표시":"평균 ATT",
-            "평균ACW_표시":"평균 ACW",
-            "평균AHT_표시":"평균 AHT",
-        }),
-        use_container_width=True, height=400
-    )
-    card_close()
+	for c in ["평균대기","평균ATT","평균ACW","평균AHT"]:
+   	 ag[c+"_표시"] = ag[c].apply(fmt_hms)
+
+	card_open("상담사별 성과 테이블", "ATT=통화시간(G열) / ACW=후처리(H열) / AHT=ATT+ACW")
+	st.dataframe(
+   	 ag[["상담사명","응대수",
+      	  "평균대기_표시","평균ATT_표시","평균ACW_표시","평균AHT_표시"]].rename(columns={
+       	 "평균대기_표시": "평균 대기",
+      	  "평균ATT_표시":  "평균 ATT",
+       	 "평균ACW_표시":  "평균 ACW",
+       	 "평균AHT_표시":  "평균 AHT",
+	    }),
+   	 use_container_width=True, height=400
+	)
+	card_close()
 
     c1, c2 = st.columns(2)
     with c1:
@@ -2107,7 +2121,9 @@ def page_agent_total(phone, chat, board):
             "전화 응대":    len(ph),
             "채팅 응대":    len(ch),
             "게시판 응답":  len(bo),
-            "전화 AHT":     fmt_hms(ph["AHT(초)"].mean())           if not ph.empty else "0:00:00",
+            "전화 ATT": fmt_hms(ph["통화시간(초)"].mean()) if not ph.empty else "0:00:00",
+	    "전화 ACW": fmt_hms(ph["ACW시간(초)"].mean())  if not ph.empty else "0:00:00",
+	    "전화 AHT": fmt_hms(ph["통화시간(초)"].mean() + ph["ACW시간(초)"].mean()) if not ph.empty else "0:00:00",
             "채팅 대기":    fmt_hms(ch["응답시간(초)"].mean())       if (not ch.empty and "응답시간(초)" in ch.columns) else "0:00:00",
             "채팅 리드타임":fmt_hms(ch["리드타임(초)"].mean())       if not ch.empty else "0:00:00",
             "게시판 근무내 LT": fmt_hms(bo["근무내리드타임(초)"].mean()) if (not bo.empty and "근무내리드타임(초)" in bo.columns) else "0:00:00",
