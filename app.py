@@ -431,6 +431,38 @@ def fmt_num(val):
     except:
         return "0"
 
+def calc_delta(curr, prev):
+    """증감률(%) 계산 - 인입건수 등에 사용"""
+    try:
+        if prev is None or float(prev) == 0:
+            return None
+        return round((float(curr) - float(prev)) / float(prev) * 100, 1)
+    except:
+        return None
+
+def calc_delta_pp(curr, prev):
+    """퍼센트포인트(%p) 차이 계산 - 응대율/응답률에 사용"""
+    try:
+        if prev is None:
+            return None
+        return round(float(curr) - float(prev), 1)
+    except:
+        return None
+
+def get_prev_period(df, start, end):
+    """이전 동일 기간 데이터 반환"""
+    if df.empty or "일자" not in df.columns:
+        return pd.DataFrame()
+    period_days = (pd.Timestamp(end) - pd.Timestamp(start)).days + 1
+    prev_end    = pd.Timestamp(start) - timedelta(days=1)
+    prev_start  = prev_end - timedelta(days=period_days - 1)
+    mask = (df["일자"] >= prev_start) & (df["일자"] <= prev_end)
+    return df[mask].copy()
+# ✅ 여기까지 ↑↑↑
+
+def to_date(v):
+    if v is None: return None
+
 def to_date(v):
     if v is None: return None
     if isinstance(v, date) and not isinstance(v, datetime): return v
@@ -624,10 +656,12 @@ def donut_legend_html(labels, values, colors):
 # KPI 카드
 # ══════════════════════════════════════════════
 def kpi_card(label, value, delta_curr=None, delta_yoy=None,
-             reverse=False, unit="", accent="default"):
+             reverse=False, unit="", accent="default", delta_unit="%"):
     accent_map = {
-        "green": " green", "orange": " orange",
-        "red":   " red",   "blue":   " blue",
+        "green":   " green",
+        "orange":  " orange",
+        "red":     " red",
+        "blue":    " blue",
         "default": ""
     }
     ac = accent_map.get(accent, "")
@@ -637,15 +671,14 @@ def kpi_card(label, value, delta_curr=None, delta_yoy=None,
         sign = "▲" if val > 0 else ("▼" if val < 0 else "—")
         d    = "up" if val > 0 else ("down" if val < 0 else "neu")
         rc   = " rev" if rev else ""
-        return f'<span class="kpi-delta {d}{rc}">{sign} {abs(val):.1f}%</span>'
+        return (f'<span class="kpi-delta {d}{rc}">'
+                f'{sign} {abs(val):.1f}{delta_unit}</span>')
 
     dh = ""
     if delta_curr is not None: dh += badge(delta_curr, reverse)
     if delta_yoy  is not None:
         dh += '<span style="font-size:10px;color:#94a3b8;margin:0 3px;font-weight:800;">YoY</span>'
         dh += badge(delta_yoy, reverse)
-    if not dh:
-        dh = '<span class="kpi-delta neu">— 비교없음</span>'
 
     return f"""<div class="kpi-card{ac}">
         <div class="kpi-label">{label}</div>
@@ -767,16 +800,21 @@ def load_phone():
             df["일자"].astype(str) + " " + df["인입시각"].astype(str),
             errors="coerce"
         )
-        # ★ 핵심: robust parsing (H:MM:SS → 초)
-        for c in ["통화시간(초)","ACW시간(초)","대기시간(초)"]:
-            df = ensure_seconds_col(df, c)
-        df["AHT(초)"]  = df["통화시간(초)"] + df["ACW시간(초)"]
+        # ✅ 각각 개별 파싱
+        df = ensure_seconds_col(df, "대기시간(초)")
+        df = ensure_seconds_col(df, "통화시간(초)")
+        df = ensure_seconds_col(df, "ACW시간(초)")
+
+        # ✅ AHT = ATT + ACW
+        df["AHT(초)"] = df["통화시간(초)"] + df["ACW시간(초)"]
+
         df["응대여부"] = df["상담사명"].apply(
             lambda x: "미응대" if str(x).strip() == "미응대" else "응대"
         )
         df["인입시간대"] = df["인입시각"].dt.hour
         return assign_period_cols(df, "일자")
-    except:
+    except Exception as e:
+        st.error(f"전화 데이터 로드 오류: {e}")
         return pd.DataFrame(columns=[
             "일자","사업자명","브랜드","상담사명","인입시각",
             "대기시간(초)","통화시간(초)","ACW시간(초)","대분류","중분류","소분류",
@@ -1062,10 +1100,11 @@ def render_daily_trends_block(kind, df_daily):
 # ══════════════════════════════════════════════
 # 전체 현황
 # ══════════════════════════════════════════════
-def page_overview(phone, chat, board, unit, month_range, start, end):
+def page_overview(phone, chat, board, unit, month_range, start, end,
+                  phone_all=None, chat_all=None, board_all=None):
     updated = datetime.now().strftime("%Y-%m-%d %H:%M")
-    s_str = start.strftime("%Y.%m.%d") if hasattr(start, "strftime") else str(start)
-    e_str = end.strftime("%Y.%m.%d")   if hasattr(end,   "strftime") else str(end)
+    s_str = start.strftime("%Y.%m.%d") if hasattr(start,"strftime") else str(start)
+    e_str = end.strftime("%Y.%m.%d")   if hasattr(end,  "strftime") else str(end)
 
     st.markdown(f"""
     <div class="dash-header">
@@ -1073,73 +1112,131 @@ def page_overview(phone, chat, board, unit, month_range, start, end):
         <h1>📊 Contact Center Dashboard</h1>
         <span>Updated {updated}</span>
       </div>
-      <div>
-        <span class="dash-badge">{s_str} ~ {e_str}</span>
-      </div>
+      <div><span class="dash-badge">{s_str} ~ {e_str}</span></div>
     </div>""", unsafe_allow_html=True)
 
-    t_ph = len(phone)
-    t_ch = len(chat)
-    t_bo = len(board)
+    # ── 현재 기간 집계
+    t_ph  = len(phone)
+    t_ch  = len(chat)
+    t_bo  = len(board)
     t_all = t_ph + t_ch + t_bo
 
     r_ph = len(phone[phone["응대여부"]=="응대"]) if not phone.empty else 0
     r_ch = len(chat[chat["응대여부"]=="응대"])   if not chat.empty  else 0
     r_bo = len(board[board["응대여부"]=="응대"]) if not board.empty else 0
+    rr_ph = r_ph / t_ph * 100 if t_ph else 0
+    rr_ch = r_ch / t_ch * 100 if t_ch else 0
+    rr_bo = r_bo / t_bo * 100 if t_bo else 0
 
-    # KPI row
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(kpi_card("전체 인입", fmt_num(t_all), unit="건"), unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("전화 인입", fmt_num(t_ph), unit="건", accent="blue"), unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("채팅 인입", fmt_num(t_ch), unit="건", accent="green"), unsafe_allow_html=True)
-    with c4: st.markdown(kpi_card("게시판 인입", fmt_num(t_bo), unit="건", accent="orange"), unsafe_allow_html=True)
+    # ── 이전 동일 기간 집계
+    ph_prev = get_prev_period(phone_all, start, end) if phone_all is not None else pd.DataFrame()
+    ch_prev = get_prev_period(chat_all,  start, end) if chat_all  is not None else pd.DataFrame()
+    bo_prev = get_prev_period(board_all, start, end) if board_all is not None else pd.DataFrame()
 
+    t_ph_prev  = len(ph_prev)
+    t_ch_prev  = len(ch_prev)
+    t_bo_prev  = len(bo_prev)
+    t_all_prev = t_ph_prev + t_ch_prev + t_bo_prev
+
+    rph_prev  = len(ph_prev[ph_prev["응대여부"]=="응대"]) if not ph_prev.empty else 0
+    rch_prev  = len(ch_prev[ch_prev["응대여부"]=="응대"]) if not ch_prev.empty else 0
+    rbo_prev  = len(bo_prev[bo_prev["응대여부"]=="응대"]) if not bo_prev.empty else 0
+    rrph_prev = rph_prev / t_ph_prev * 100 if t_ph_prev else 0
+    rrch_prev = rch_prev / t_ch_prev * 100 if t_ch_prev else 0
+    rrbo_prev = rbo_prev / t_bo_prev * 100 if t_bo_prev else 0
+
+    # ── KPI row (인입건수 - % 증감)
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.markdown(kpi_card("전체 인입",   fmt_num(t_all),
+                         delta_curr=calc_delta(t_all, t_all_prev),
+                         unit="건"), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("전화 인입",   fmt_num(t_ph),
+                         delta_curr=calc_delta(t_ph, t_ph_prev),
+                         unit="건", accent="blue"), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("채팅 인입",   fmt_num(t_ch),
+                         delta_curr=calc_delta(t_ch, t_ch_prev),
+                         unit="건", accent="green"), unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("게시판 인입", fmt_num(t_bo),
+                         delta_curr=calc_delta(t_bo, t_bo_prev),
+                         unit="건", accent="orange"), unsafe_allow_html=True)
+
+    # ── 응대율 (응대율 - %p 차이)
     section_title("채널별 응대율")
-    c1, c2, c3 = st.columns(3)
-    with c1: st.markdown(kpi_card("전화 응대율",   fmt_pct(r_ph/t_ph*100 if t_ph else 0), accent="blue"),   unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("채팅 응대율",   fmt_pct(r_ch/t_ch*100 if t_ch else 0), accent="green"),  unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("게시판 응답률", fmt_pct(r_bo/t_bo*100 if t_bo else 0), accent="orange"), unsafe_allow_html=True)
+    c1,c2,c3 = st.columns(3)
+    with c1: st.markdown(kpi_card("전화 응대율",   fmt_pct(rr_ph),
+                         delta_curr=calc_delta_pp(rr_ph, rrph_prev),
+                         accent="blue",   delta_unit="%p"), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("채팅 응대율",   fmt_pct(rr_ch),
+                         delta_curr=calc_delta_pp(rr_ch, rrch_prev),
+                         accent="green",  delta_unit="%p"), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("게시판 응답률", fmt_pct(rr_bo),
+                         delta_curr=calc_delta_pp(rr_bo, rrbo_prev),
+                         accent="orange", delta_unit="%p"), unsafe_allow_html=True)
 
+    # ── 채널 분포 & 추이 (기존 유지)
     section_title("채널별 인입 분포 & 추이")
-    c_donut, c_trend = st.columns([1, 2])
-
+    c_donut, c_trend = st.columns([1,2])
     with c_donut:
-        card_open("채널 분포", "Channel distribution")
-        fig = donut_chart(
-            ["전화","채팅","게시판"],
-            [t_ph, t_ch, t_bo],
-            [COLORS["phone"],COLORS["chat"],COLORS["board"]],
-            h=240
-        )
+        card_open("채널 분포","Channel distribution")
+        fig = donut_chart(["전화","채팅","게시판"],[t_ph,t_ch,t_bo],
+                          [COLORS["phone"],COLORS["chat"],COLORS["board"]],h=240)
         st.plotly_chart(fig, use_container_width=True)
-        st.markdown(
-            donut_legend_html(
-                ["전화","채팅","게시판"],
-                [t_ph, t_ch, t_bo],
-                [COLORS["phone"],COLORS["chat"],COLORS["board"]]
-            ),
-            unsafe_allow_html=True
-        )
+        st.markdown(donut_legend_html(
+            ["전화","채팅","게시판"],[t_ph,t_ch,t_bo],
+            [COLORS["phone"],COLORS["chat"],COLORS["board"]]),
+            unsafe_allow_html=True)
         card_close()
-
     with c_trend:
         card_open("채널별 인입 추이", f"기간 단위: {unit}")
         pc = get_period_col(unit)
-        cr_s, _ = get_chart_range(unit, end, month_range)
-
+        cr_s,_ = get_chart_range(unit, end, month_range)
         def agg(df):
             if df.empty or pc not in df.columns:
                 return pd.DataFrame(columns=[pc,"건수"])
             return (df[df[pc] >= pd.Timestamp(cr_s)]
-                    .groupby(pc).size()
-                    .reset_index(name="건수"))
-
+                    .groupby(pc).size().reset_index(name="건수"))
         fig = trend_chart(
-            {"전화": agg(phone), "채팅": agg(chat), "게시판": agg(board)},
-            unit=unit, y_label="건수", h=320
-        )
+            {"전화":agg(phone),"채팅":agg(chat),"게시판":agg(board)},
+            unit=unit, y_label="건수", h=320)
         st.plotly_chart(fig, use_container_width=True)
         card_close()
+
+    # ── 응대율 추이
+    section_title("응대율 추이 비교")
+    pc = get_period_col(unit)
+    cr_s,_ = get_chart_range(unit, end, month_range)
+
+    def rr_trend(df):
+        if df.empty or pc not in df.columns:
+            return pd.DataFrame(columns=[pc,"응대율"])
+        return (df[df[pc] >= pd.Timestamp(cr_s)]
+                .groupby(pc)
+                .apply(lambda x: pd.Series({
+                    "응대율": (x["응대여부"]=="응대").sum() / len(x) * 100.0
+                }))
+                .reset_index())
+
+    card_open("채널별 응대율 추이", f"기간 단위: {unit}")
+    fig2 = go.Figure()
+    for nm, rr_df, c in [
+        ("전화 응대율",   rr_trend(phone), COLORS["phone"]),
+        ("채팅 응대율",   rr_trend(chat),  COLORS["chat"]),
+        ("게시판 응답률", rr_trend(board), COLORS["board"]),
+    ]:
+        if not rr_df.empty and pc in rr_df.columns:
+            fig2.add_trace(go.Scatter(
+                x=rr_df[pc], y=rr_df["응대율"],
+                mode="lines+markers", name=nm,
+                line=dict(color=c, width=2.5),
+                marker=dict(size=6, color=c),
+                hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>"
+            ))
+    lo = base_layout(280,"")
+    lo["yaxis"]["ticksuffix"] = "%"
+    lo["yaxis"]["range"] = [0,110]
+    fig2.update_layout(**lo)
+    st.plotly_chart(fig2, use_container_width=True)
+    card_close()
 
     # 응대율 비교 추이
     section_title("응대율 추이 비교")
@@ -2232,7 +2329,10 @@ def main():
     menu = st.session_state.get("menu", "전체 현황")
 
     if   menu == "전체 현황":
-        page_overview(phone_f, chat_f, board_f, unit, month_range, date_start, date_end)
+        page_overview(phone_f, chat_f, board_f, unit, month_range, date_start, date_end,
+              phone_all=phone_m,   # 필터 전 전체 데이터 (이전기간 계산용)
+              chat_all=chat_m,
+              board_all=board_m)
     elif menu == "VOC 인입 분석":
         page_voc(phone_f, chat_f, board_f, unit, month_range, date_start, date_end)
     elif menu == "사업자 현황":
