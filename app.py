@@ -1537,38 +1537,43 @@ def page_phone(phone, unit, month_range, start, end):
     card_close()
 
     # AHT 구성
-    if not resp.empty:
-        section_title("AHT 구성 분석 (통화 + ACW)")
-        aht_df = resp.groupby(pc).agg(
-            ATT=("통화시간(초)", "mean"),   # G열
-            ACW=("ACW시간(초)",  "mean"),   # H열
-        ).reset_index()
-	aht_df["AHT"] = aht_df["ATT"] + aht_df["ACW"]  # 합계
-        c1, c2 = st.columns([2,1])
-        with c1:
-	card_open("기간별 평균 AHT 구성", f"ATT(통화) + ACW = AHT")
-	fig4 = go.Figure()
-	fig4.add_trace(go.Bar(
-   	 x=aht_df[pc], y=aht_df["ATT"],
-    	name="ATT (통화시간)",
-   	 marker_color=COLORS["primary"],
-    	hovertemplate="%{x}<br>ATT: %{y:.0f}초<extra></extra>"
-	))
-	fig4.add_trace(go.Bar(
-   	 x=aht_df[pc], y=aht_df["ACW"],
-   	 name="ACW (후처리)",
-    	marker_color=COLORS["warning"],
-    	hovertemplate="%{x}<br>ACW: %{y:.0f}초<extra></extra>"
-	))
-	fig4.update_layout(barmode="stack", **base_layout(290,""))
-	st.plotly_chart(fig4, use_container_width=True)
-	card_close()
-        with c2:
-            card_open("평균 ACW 요약")
-            st.markdown(kpi_card("평균 ACW", fmt_hms(acw), accent="orange"), unsafe_allow_html=True)
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            st.markdown(kpi_card("평균 ATT", fmt_hms(att), accent="blue"),   unsafe_allow_html=True)
-            card_close()
+        if not resp.empty:
+            section_title("AHT 구성 분석 (ATT + ACW)")
+            aht_df = resp.groupby(pc).agg(
+                ATT=("통화시간(초)", "mean"),
+                ACW=("ACW시간(초)", "mean"),
+            ).reset_index()
+            aht_df["AHT"] = aht_df["ATT"] + aht_df["ACW"]
+            c1, c2 = st.columns([2,1])
+            with c1:
+                card_open("기간별 평균 AHT 구성", "ATT(통화) + ACW = AHT")
+                fig4 = go.Figure()
+                fig4.add_trace(go.Bar(
+                    x=aht_df[pc], y=aht_df["ATT"],
+                    name="ATT (통화시간)",
+                    marker_color=COLORS["primary"],
+                    hovertemplate="%{x}<br>ATT: %{y:.0f}초<extra></extra>"
+                ))
+                fig4.add_trace(go.Bar(
+                    x=aht_df[pc], y=aht_df["ACW"],
+                    name="ACW (후처리)",
+                    marker_color=COLORS["warning"],
+                    hovertemplate="%{x}<br>ACW: %{y:.0f}초<extra></extra>"
+                ))
+                fig4.update_layout(barmode="stack", **base_layout(290, ""))
+                st.plotly_chart(fig4, use_container_width=True)
+                card_close()
+            with c2:
+                card_open("평균 요약")
+                att_avg = resp["통화시간(초)"].mean()
+                acw_avg = resp["ACW시간(초)"].mean()
+                aht_avg = att_avg + acw_avg
+                st.markdown(kpi_card("평균 ATT", fmt_hms(att_avg), accent="blue"),   unsafe_allow_html=True)
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                st.markdown(kpi_card("평균 ACW", fmt_hms(acw_avg), accent="orange"), unsafe_allow_html=True)
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                st.markdown(kpi_card("평균 AHT", fmt_hms(aht_avg), accent="green"),  unsafe_allow_html=True)
+                card_close()
 
     # 문의 유형
     if "대분류" in phone.columns:
