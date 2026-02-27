@@ -585,28 +585,58 @@ def overlap_seconds(a_s: datetime, a_e: datetime, b_s: datetime, b_e: datetime) 
     return (end - start).total_seconds()
 
 def split_board_leadtime(start_dt, end_dt):
-    """Returns (in_hours_sec, off_hours_sec, total_sec)"""
+    """
+    근무내 = 평일 10:00~18:00
+    근무외 = 평일 18:00~10:00
+    주말/공휴일 = 제외 (카운트 안함)
+    """
     if pd.isna(start_dt) or pd.isna(end_dt):
         return 0.0, 0.0, 0.0
     s = pd.Timestamp(start_dt).to_pydatetime()
     e = pd.Timestamp(end_dt).to_pydatetime()
     if e <= s:
         return 0.0, 0.0, 0.0
-    total   = (e - s).total_seconds()
+
     in_sec  = 0.0
+    off_sec = 0.0
+
     cur_day = s.date()
     end_day = e.date()
+
     while cur_day <= end_day:
-        day_start = datetime.combine(cur_day, time(0, 0, 0))
-        day_end   = datetime.combine(cur_day, time(23, 59, 59)) + timedelta(seconds=1)
+        # ✅ 주말/공휴일은 완전히 스킵
+        if not is_business_day(cur_day):
+            cur_day += timedelta(days=1)
+            continue
+
+        day_start = datetime.combine(cur_day, time(0,  0, 0))
+        day_end   = datetime.combine(cur_day, time(23,59,59)) + timedelta(seconds=1)
+
         seg_s = max(s, day_start)
         seg_e = min(e, day_end)
-        if seg_e > seg_s and is_business_day(cur_day):
+
+        if seg_e > seg_s:
+            # 근무내 구간: 10:00~18:00
             bh_s = datetime.combine(cur_day, time(WORK_START, 0, 0))
             bh_e = datetime.combine(cur_day, time(WORK_END,   0, 0))
-            in_sec += overlap_seconds(seg_s, seg_e, bh_s, bh_e)
+
+            # 근무외 구간1: 00:00~10:00
+            off_s1 = datetime.combine(cur_day, time(0,  0, 0))
+            off_e1 = datetime.combine(cur_day, time(WORK_START, 0, 0))
+
+            # 근무외 구간2: 18:00~24:00
+            off_s2 = datetime.combine(cur_day, time(WORK_END, 0, 0))
+            off_e2 = datetime.combine(cur_day, time(23,59,59)) + timedelta(seconds=1)
+
+            # 근무내 계산
+            in_sec  += overlap_seconds(seg_s, seg_e, bh_s,  bh_e)
+            # 근무외 계산 (평일 10시 전 + 18시 후)
+            off_sec += overlap_seconds(seg_s, seg_e, off_s1, off_e1)
+            off_sec += overlap_seconds(seg_s, seg_e, off_s2, off_e2)
+
         cur_day += timedelta(days=1)
-    off_sec = max(total - in_sec, 0.0)
+
+    total = in_sec + off_sec
     return float(in_sec), float(off_sec), float(total)
 
 def add_board_split_cols(df):
