@@ -2305,8 +2305,14 @@ def page_sla_breach(phone, chat, board, unit):
 
     # 게시판: 전체 LT > 24h
     bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
-    bo_breach_n = int((bo_resp["리드타임(초)"] > SLA_BOARD_TOTAL).sum()) if not bo_resp.empty else 0
-    bo_breach_r = bo_breach_n / len(bo_resp) * 100 if len(bo_resp) > 0 else 0.0
+if not bo_resp.empty:
+    bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
+    bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
+    bo_breach_n = bo_breach_in_n + bo_breach_off_n
+    bo_breach_r = bo_breach_n / len(bo_resp) * 100
+else:
+    bo_breach_n = 0
+    bo_breach_r = 0.0
 
     # ── KPI 카드 ─────────────────────────────────
     c1,c2,c3,c4,c5,c6 = st.columns(6)
