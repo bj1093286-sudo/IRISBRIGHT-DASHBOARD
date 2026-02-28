@@ -3329,11 +3329,8 @@ def page_multichannel(phone, chat, board):
 
     # 성과 비교
     def compare_metric(df_sub, metric_col, agent_set, label):
-        filtered = df_subCopy
-이어ㅛㅓ
-계속 이어서 작성합니다.
-
-Copy    def compare_metric(df_sub, metric_col, agent_set, label):
+        filtered = df_sub
+    def compare_metric(df_sub, metric_col, agent_set, label):
         filtered = df_sub[df_sub["상담사명"].isin(agent_set)]
         if filtered.empty or metric_col not in filtered.columns:
             return None
