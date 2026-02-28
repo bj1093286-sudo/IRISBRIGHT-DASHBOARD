@@ -854,6 +854,15 @@ def filter_df(df, start, end, brands=None, operators=None):
     if operators and "사업자명" in df.columns: df = df[df["사업자명"].isin(operators)]
     return df
 
+# ── 차트/테이블용 미지정·미입력 제거 헬퍼 ────────────
+# KPI 집계에는 영향 없이, 그래프·테이블 렌더링 직전에만 사용
+def chart_df(df):
+    """팀명=\'미지정\' / 근속그룹=\'미입력\' 행을 차트·테이블에서 제거"""
+    out = df.copy()
+    if "팀명"    in out.columns: out = out[out["팀명"]    != "미지정"]
+    if "근속그룹" in out.columns: out = out[out["근속그룹"] != "미입력"]
+    return out
+
 # ══════════════════════════════════════════════
 # 일별 추이 집계 (기존 유지)
 # ══════════════════════════════════════════════
@@ -1599,7 +1608,7 @@ def page_phone_agent(phone, unit, month_range):
     with c1:
         if "팀명" in resp.columns:
             section_title("팀별 평균 AHT")
-            tm = resp.groupby("팀명").agg(
+            tm = chart_df(resp).groupby("팀명").agg(
                 응대수=("팀명", "count"),
                 평균ATT=("통화시간(초)", "mean"),
                 평균ACW=("ACW시간(초)", "mean"),
@@ -1622,7 +1631,7 @@ def page_phone_agent(phone, unit, month_range):
     with c2:
         if "근속그룹" in resp.columns:
             section_title("근속그룹별 AHT")
-            tg = resp.groupby("근속그룹").agg(
+            tg = chart_df(resp).groupby("근속그룹").agg(
                 응대수=("근속그룹", "count"),
                 평균ATT=("통화시간(초)", "mean"),
                 평균ACW=("ACW시간(초)", "mean"),
@@ -1823,7 +1832,7 @@ def page_chat_agent(chat, unit, month_range):
     with c1:
         if "팀명" in resp.columns:
             section_title("팀별 평균 대기시간")
-            tm = resp.groupby("팀명").agg(
+            tm = chart_df(resp).groupby("팀명").agg(
                 응대수=("팀명","count"), 평균대기=("응답시간(초)","mean")
             ).round(1).reset_index()
             card_open("팀별 평균 대기시간(초)")
@@ -1838,7 +1847,7 @@ def page_chat_agent(chat, unit, month_range):
     with c2:
         if "근속그룹" in resp.columns:
             section_title("근속그룹별 평균 대기시간")
-            tg = resp.groupby("근속그룹").agg(
+            tg = chart_df(resp).groupby("근속그룹").agg(
                 응대수=("근속그룹","count"), 평균대기=("응답시간(초)","mean")
             ).round(1).reset_index()
             card_open("근속그룹별 평균 대기시간(초)")
@@ -2090,7 +2099,7 @@ def page_board_agent(board, unit, month_range):
     with c1:
         if "팀명" in resp.columns:
             section_title("팀별 평균 근무내/외 LT")
-            tm = resp.groupby("팀명").agg(
+            tm = chart_df(resp).groupby("팀명").agg(
                 응답수=("팀명","count"),
                 근무내LT=("근무내리드타임(초)","mean"),
                 근무외LT=("근무외리드타임(초)","mean"),
@@ -2111,7 +2120,7 @@ def page_board_agent(board, unit, month_range):
     with c2:
         if "근속그룹" in resp.columns:
             section_title("근속그룹별 평균 LT")
-            tg = resp.groupby("근속그룹").agg(
+            tg = chart_df(resp).groupby("근속그룹").agg(
                 응답수=("근속그룹","count"),
                 근무내LT=("근무내리드타임(초)","mean"),
                 근무외LT=("근무외리드타임(초)","mean"),
@@ -2777,7 +2786,7 @@ def page_outlier(phone, chat, board):
         if not ph_resp.empty and "팀명" in ph_resp.columns:
             card_open("팀별 AHT 분포 (Box Plot)", "IQR 범위 + 이상치 포인트 표시")
             fig_box = px.box(
-                ph_resp, x="팀명", y="AHT(초)",
+                chart_df(ph_resp), x="팀명", y="AHT(초)",
                 color="팀명",
                 color_discrete_sequence=PALETTE,
                 points="outliers",
@@ -2795,7 +2804,7 @@ def page_outlier(phone, chat, board):
         if not ch_resp.empty:
             card_open("팀별 채팅 대기시간 분포 (Box Plot)", "이상치 포인트 표시")
             fig_box2 = px.box(
-                ch_resp, x="팀명", y="응답시간(초)",
+                chart_df(ch_resp), x="팀명", y="응답시간(초)",
                 color="팀명",
                 color_discrete_sequence=PALETTE,
                 points="outliers",
@@ -3534,7 +3543,7 @@ def page_aht_dispersion(phone, chat):
                 if "팀명" in ph_resp.columns:
                     card_open("팀별 AHT 박스플롯")
                     fig = px.box(
-                        ph_resp, x="팀명", y="AHT(초)", color="팀명",
+                        chart_df(ph_resp), x="팀명", y="AHT(초)", color="팀명",
                         color_discrete_sequence=PALETTE, points="outliers",
                         hover_data=["상담사명"] if "상담사명" in ph_resp.columns else None
                     )
@@ -3546,7 +3555,7 @@ def page_aht_dispersion(phone, chat):
                 if "근속그룹" in ph_resp.columns:
                     card_open("근속그룹별 AHT 박스플롯")
                     fig2 = px.box(
-                        ph_resp, x="근속그룹", y="AHT(초)", color="근속그룹",
+                        chart_df(ph_resp), x="근속그룹", y="AHT(초)", color="근속그룹",
                         color_discrete_sequence=PALETTE, points="outliers",
                         hover_data=["상담사명"] if "상담사명" in ph_resp.columns else None
                     )
@@ -3635,6 +3644,7 @@ def page_learning_curve(phone, chat, board):
     def tenure_stats(df, metric_col, vol_col=None):
         if df.empty or "근속그룹" not in df.columns:
             return pd.DataFrame()
+        df   = chart_df(df)   # 미입력 근속그룹 제거
         resp = df[df["응대여부"]=="응대"] if "응대여부" in df.columns else df
         if resp.empty:
             return pd.DataFrame()
@@ -4454,7 +4464,7 @@ def page_team_channel_matrix(phone, chat, board):
     def team_channel_agg(df, ch_label, time_col):
         if df.empty or "팀명" not in df.columns:
             return pd.DataFrame()
-        tmp = df.copy()
+        tmp = chart_df(df.copy())  # 미지정 팀명 제거
         total = tmp.groupby("팀명").size().rename("전체")
         resp_cnt = tmp[tmp["응대여부"]=="응대"].groupby("팀명").size().rename("응대")
         out = pd.concat([total, resp_cnt], axis=1).fillna(0).reset_index()
