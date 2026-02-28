@@ -2225,149 +2225,366 @@ def page_agent_total(phone, chat, board):
 def page_sla_breach(phone, chat, board, unit):
     section_title("A1. SLA 위반 지표")
 
-    # ── 1. 슬라이더 UI ──────────────────────────────
-    with st.expander("⚙️ SLA 기준값 조정", expanded=False):
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            phone_sla_on = st.checkbox("전화 SLA 적용", value=False, key="sla_ph_on")
-            sla_phone_val = st.number_input("전화 대기시간 기준(초)", min_value=5,
-                                            max_value=300, value=20, step=5,
-                                            key="sla_ph_val", disabled=not phone_sla_on)
-        with c2:
-            sla_chat_val = st.slider("채팅 응답시간 기준(초)", min_value=30,
-                                     max_value=300, value=120, step=10, key="sla_ch_val")
-        with c3:
-            sla_board_in_h = st.slider("근무내 기준(시간)", min_value=1,
-                                       max_value=12, value=3, step=1, key="sla_bo_in")
-        with c4:
-            sla_board_off_h = st.slider("근무외 기준(시간)", min_value=1,
-                                        max_value=24, value=7, step=1, key="sla_bo_off")
+    # ══════════════════════════════════════════════
+    # 1. SLA 기준값 설정 패널 (채널별 탭)
+    # ══════════════════════════════════════════════
+    with st.expander("⚙️ SLA 기준값 설정 (클릭하여 조정)", expanded=True):
+        tab_ph_cfg, tab_ch_cfg, tab_bo_cfg = st.tabs(["📞 전화 SLA", "💬 채팅 SLA", "📝 게시판 SLA"])
 
-    # ── 2. 변수 확정 (반드시 슬라이더 직후, KPI 계산 전) ──
-    _sla_phone     = sla_phone_val if phone_sla_on else None
-    _sla_chat      = sla_chat_val
-    _sla_board_in  = sla_board_in_h * 3600
-    _sla_board_off = sla_board_off_h * 3600
+        with tab_ph_cfg:
+            st.markdown("**전화 SLA: 응대율 기준 + 처리시간 기준**")
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                sla_ph_rr = st.slider(
+                    "목표 응대율 (%)", 80, 100, 98, 1, key="sla_ph_rr",
+                    help="일별 응대율이 이 값 미만인 날을 SLA 위반으로 집계"
+                )
+            with c2:
+                sla_ph_att = st.number_input(
+                    "ATT 기준 (초)", min_value=30, max_value=600, value=240, step=10,
+                    key="sla_ph_att", help="기본 4분(240초)"
+                )
+            with c3:
+                sla_ph_acw = st.number_input(
+                    "ACW 기준 (초)", min_value=10, max_value=600, value=180, step=10,
+                    key="sla_ph_acw", help="기본 3분(180초)"
+                )
+            with c4:
+                sla_ph_aht = st.number_input(
+                    "AHT 기준 (초)", min_value=60, max_value=1200, value=420, step=10,
+                    key="sla_ph_aht", help="기본 7분(420초)"
+                )
+            st.markdown(f"""
+            <div class="alert-card info" style="margin-top:8px;">
+              <span class="alert-icon">ℹ️</span>
+              <span>현재 설정: 응대율 <b>{sla_ph_rr}%</b> 이상 &nbsp;|&nbsp;
+              ATT ≤ <b>{sla_ph_att}초({sla_ph_att//60}분{sla_ph_att%60:02d}초)</b> &nbsp;|&nbsp;
+              ACW ≤ <b>{sla_ph_acw}초({sla_ph_acw//60}분{sla_ph_acw%60:02d}초)</b> &nbsp;|&nbsp;
+              AHT ≤ <b>{sla_ph_aht}초({sla_ph_aht//60}분{sla_ph_aht%60:02d}초)</b></span>
+            </div>""", unsafe_allow_html=True)
 
-    # ── 3. 데이터 필터 ───────────────────────────────
+        with tab_ch_cfg:
+            st.markdown("**채팅 SLA: 대기시간 + 리드타임 기준**")
+            c1, c2 = st.columns(2)
+            with c1:
+                sla_ch_wait = st.number_input(
+                    "대기시간 기준 (초)", min_value=10, max_value=600, value=120, step=10,
+                    key="sla_ch_wait", help="기본 2분(120초) — 접수→첫응답"
+                )
+            with c2:
+                sla_ch_lt = st.number_input(
+                    "리드타임 기준 (초)", min_value=60, max_value=3600, value=1500, step=60,
+                    key="sla_ch_lt", help="기본 25분(1500초) — 접수→종료"
+                )
+            st.markdown(f"""
+            <div class="alert-card info" style="margin-top:8px;">
+              <span class="alert-icon">ℹ️</span>
+              <span>현재 설정: 대기시간 ≤ <b>{sla_ch_wait}초({sla_ch_wait//60}분{sla_ch_wait%60:02d}초)</b> &nbsp;|&nbsp;
+              리드타임 ≤ <b>{sla_ch_lt}초({sla_ch_lt//60}분{sla_ch_lt%60:02d}초)</b></span>
+            </div>""", unsafe_allow_html=True)
+
+        with tab_bo_cfg:
+            st.markdown("**게시판 SLA: 근무내/근무외 리드타임 기준**")
+            c1, c2 = st.columns(2)
+            with c1:
+                sla_bo_in_h = st.slider(
+                    "근무내 기준 (시간)", 1, 12, 3, 1, key="sla_bo_in",
+                    help="영업시간(10~18시) 내 처리 목표"
+                )
+            with c2:
+                sla_bo_off_h = st.slider(
+                    "근무외 기준 (시간)", 1, 24, 7, 1, key="sla_bo_off",
+                    help="영업시간 외 처리 목표"
+                )
+            st.markdown(f"""
+            <div class="alert-card info" style="margin-top:8px;">
+              <span class="alert-icon">ℹ️</span>
+              <span>현재 설정: 근무내 ≤ <b>{sla_bo_in_h}시간</b> &nbsp;|&nbsp;
+              근무외 ≤ <b>{sla_bo_off_h}시간</b></span>
+            </div>""", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════
+    # 2. 변수 확정
+    # ══════════════════════════════════════════════
+    _sla_ph_rr     = sla_ph_rr          # 전화 목표 응대율 (%)
+    _sla_ph_att    = sla_ph_att         # 전화 ATT 기준 (초)
+    _sla_ph_acw    = sla_ph_acw         # 전화 ACW 기준 (초)
+    _sla_ph_aht    = sla_ph_aht         # 전화 AHT 기준 (초)
+    _sla_ch_wait   = sla_ch_wait        # 채팅 대기시간 기준 (초)
+    _sla_ch_lt     = sla_ch_lt          # 채팅 리드타임 기준 (초)
+    _sla_bo_in     = sla_bo_in_h  * 3600
+    _sla_bo_off    = sla_bo_off_h * 3600
+
+    # ══════════════════════════════════════════════
+    # 3. 데이터 준비
+    # ══════════════════════════════════════════════
+    ph_all  = phone.copy() if not phone.empty else pd.DataFrame()
     ph_resp = phone[phone["응대여부"]=="응대"] if not phone.empty else pd.DataFrame()
     ch_resp = chat[chat["응대여부"]=="응대"]   if not chat.empty  else pd.DataFrame()
     bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
 
-    # ── 4. KPI 계산 ──────────────────────────────────
-    # 전화: 사용자 설정 SLA 기준
-    ph_breach_n = int((ph_resp["대기시간(초)"] > _sla_phone).sum()) if (not ph_resp.empty and _sla_phone) else 0
-    ph_breach_r = ph_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
+    # ══════════════════════════════════════════════
+    # 4. KPI 계산
+    # ══════════════════════════════════════════════
 
-    # 채팅: 응답시간 기준
-    ch_breach_n = int((ch_resp["응답시간(초)"] > _sla_chat).sum()) if not ch_resp.empty else 0
-    ch_breach_r = ch_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
-
-    # 게시판: 근무내/근무외 기준
-    if not bo_resp.empty:
-        bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
-        bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
-        bo_breach_n = bo_breach_in_n + bo_breach_off_n
-        bo_breach_r = bo_breach_n / len(bo_resp) * 100
+    # ── 전화: 응대율 기준 (일별 위반일 수) ──────────
+    if not ph_all.empty and "일자" in ph_all.columns:
+        ph_all["일자_단"] = pd.to_datetime(ph_all["일자"], errors="coerce").dt.date
+        daily_rr = ph_all.groupby("일자_단").apply(
+            lambda x: (x["응대여부"]=="응대").sum() / len(x) * 100.0
+        ).reset_index(name="응대율")
+        ph_rr_breach_days = int((daily_rr["응대율"] < _sla_ph_rr).sum())
+        ph_rr_total_days  = len(daily_rr)
+        ph_current_rr     = daily_rr["응대율"].mean()
     else:
-        bo_breach_n = 0
-        bo_breach_r = 0.0
+        ph_rr_breach_days = 0
+        ph_rr_total_days  = 0
+        ph_current_rr     = 0.0
+        daily_rr          = pd.DataFrame()
 
-    # ── KPI 카드 ─────────────────────────────────
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    with c1: st.markdown(kpi_card("전화 SLA위반",   fmt_num(ph_breach_n), unit="건", accent="red"),    unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("전화 위반율",     fmt_pct(ph_breach_r), accent="red",   reverse=True), unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("채팅 SLA위반",   fmt_num(ch_breach_n), unit="건", accent="orange"), unsafe_allow_html=True)
-    with c4: st.markdown(kpi_card("채팅 위반율",     fmt_pct(ch_breach_r), accent="orange",reverse=True), unsafe_allow_html=True)
-    with c5: st.markdown(kpi_card("게시판 SLA위반", fmt_num(bo_breach_n), unit="건", accent="orange"), unsafe_allow_html=True)
-    with c6: st.markdown(kpi_card("게시판 위반율",   fmt_pct(bo_breach_r), accent="orange",reverse=True), unsafe_allow_html=True)
+    # ── 전화: ATT / ACW / AHT 기준 위반 건수 ────────
+    ph_att_breach_n = int((ph_resp["통화시간(초)"] > _sla_ph_att).sum()) if not ph_resp.empty else 0
+    ph_acw_breach_n = int((ph_resp["ACW시간(초)"] > _sla_ph_acw).sum())  if not ph_resp.empty else 0
+    ph_aht_breach_n = int((ph_resp["AHT(초)"]     > _sla_ph_aht).sum())  if not ph_resp.empty else 0
+    ph_att_breach_r = ph_att_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
+    ph_acw_breach_r = ph_acw_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
+    ph_aht_breach_r = ph_aht_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
 
-    st.markdown(f"""
-    <div class="alert-card info">
-      <span class="alert-icon">ℹ️</span>
-      <span>SLA 기준: 전화 대기 &gt; <b>{SLA_PHONE_WAIT}초</b> &nbsp;|&nbsp;
-      채팅 응답 &gt; <b>{SLA_CHAT_WAIT}초</b> &nbsp;|&nbsp;
-      게시판 전체 LT &gt; <b>24시간</b></span>
-    </div>""", unsafe_allow_html=True)
+    # ── 채팅: 대기시간 + 리드타임 ──────────────────
+    ch_wait_breach_n = int((ch_resp["응답시간(초)"] > _sla_ch_wait).sum()) if not ch_resp.empty else 0
+    ch_lt_breach_n   = int((ch_resp["리드타임(초)"] > _sla_ch_lt).sum())   if not ch_resp.empty else 0
+    ch_wait_breach_r = ch_wait_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
+    ch_lt_breach_r   = ch_lt_breach_n   / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
 
-    # ── 일별 SLA 위반 추이 스파크라인 ─────────────
-    section_title("SLA 위반 일별 추이")
+    # ── 게시판: 근무내 + 근무외 ────────────────────
+    if not bo_resp.empty:
+        bo_in_breach_n  = int((bo_resp["근무내리드타임(초)"] > _sla_bo_in).sum())
+        bo_off_breach_n = int((bo_resp["근무외리드타임(초)"] > _sla_bo_off).sum())
+        bo_in_breach_r  = bo_in_breach_n  / len(bo_resp) * 100
+        bo_off_breach_r = bo_off_breach_n / len(bo_resp) * 100
+    else:
+        bo_in_breach_n = bo_off_breach_n = 0
+        bo_in_breach_r = bo_off_breach_r = 0.0
 
-    def daily_breach(df, time_col, threshold, label):
-        if df.empty or time_col not in df.columns:
-            return pd.DataFrame(columns=["일자", label])
-        tmp = df.copy()
-        tmp["일자"] = pd.to_datetime(tmp["일자"], errors="coerce").dt.date
-        tmp["위반"] = tmp[time_col] > threshold
-        out = tmp.groupby("일자")["위반"].sum().reset_index(name=label)
-        out["일자"] = pd.to_datetime(out["일자"])
-        return out
+    # ══════════════════════════════════════════════
+    # 5. KPI 카드
+    # ══════════════════════════════════════════════
+    section_title("📞 전화 SLA 현황")
 
-    ph_daily = daily_breach(ph_resp, "대기시간(초)", _sla_phone, "전화위반") if _sla_phone else pd.DataFrame()
-    ch_daily = daily_breach(ch_resp, "응답시간(초)", _sla_chat,  "채팅위반")
-    bo_daily = daily_breach(bo_resp, "리드타임(초)", _sla_board_in + _sla_board_off, "게시판위반")
-
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    rr_ok = ph_current_rr >= _sla_ph_rr
     with c1:
-        card_open(f"전화 SLA 위반 추이 (>{SLA_PHONE_WAIT}초)")
-        if not ph_daily.empty:
-            fig = go.Figure(go.Scatter(
-                x=ph_daily["일자"], y=ph_daily["전화위반"],
+        ac = "green" if rr_ok else "red"
+        st.markdown(kpi_card("현재 응대율", fmt_pct(ph_current_rr),
+                             accent=ac, reverse=True), unsafe_allow_html=True)
+    with c2:
+        st.markdown(kpi_card("응대율 위반일",
+                             f"{ph_rr_breach_days}/{ph_rr_total_days}",
+                             unit="일", accent="red" if ph_rr_breach_days > 0 else "green"),
+                    unsafe_allow_html=True)
+    with c3:
+        st.markdown(kpi_card(f"ATT 초과 (>{_sla_ph_att//60}분)",
+                             fmt_num(ph_att_breach_n),
+                             unit="건", accent="orange" if ph_att_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c4:
+        st.markdown(kpi_card(f"ACW 초과 (>{_sla_ph_acw//60}분)",
+                             fmt_num(ph_acw_breach_n),
+                             unit="건", accent="orange" if ph_acw_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c5:
+        st.markdown(kpi_card(f"AHT 초과 (>{_sla_ph_aht//60}분)",
+                             fmt_num(ph_aht_breach_n),
+                             unit="건", accent="red" if ph_aht_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+
+    section_title("💬 채팅 SLA 현황")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(kpi_card(f"대기시간 초과 (>{_sla_ch_wait//60}분)",
+                             fmt_num(ch_wait_breach_n), unit="건",
+                             accent="red" if ch_wait_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c2:
+        st.markdown(kpi_card("대기시간 위반율", fmt_pct(ch_wait_breach_r),
+                             accent="red" if ch_wait_breach_r > 10 else "green", reverse=True),
+                    unsafe_allow_html=True)
+    with c3:
+        st.markdown(kpi_card(f"리드타임 초과 (>{_sla_ch_lt//60}분)",
+                             fmt_num(ch_lt_breach_n), unit="건",
+                             accent="orange" if ch_lt_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c4:
+        st.markdown(kpi_card("리드타임 위반율", fmt_pct(ch_lt_breach_r),
+                             accent="orange" if ch_lt_breach_r > 10 else "green", reverse=True),
+                    unsafe_allow_html=True)
+
+    section_title("📝 게시판 SLA 현황")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(kpi_card(f"근무내 초과 (>{sla_bo_in_h}h)",
+                             fmt_num(bo_in_breach_n), unit="건",
+                             accent="red" if bo_in_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c2:
+        st.markdown(kpi_card("근무내 위반율", fmt_pct(bo_in_breach_r),
+                             accent="red" if bo_in_breach_r > 10 else "green", reverse=True),
+                    unsafe_allow_html=True)
+    with c3:
+        st.markdown(kpi_card(f"근무외 초과 (>{sla_bo_off_h}h)",
+                             fmt_num(bo_off_breach_n), unit="건",
+                             accent="orange" if bo_off_breach_r > 10 else "green"),
+                    unsafe_allow_html=True)
+    with c4:
+        st.markdown(kpi_card("근무외 위반율", fmt_pct(bo_off_breach_r),
+                             accent="orange" if bo_off_breach_r > 10 else "green", reverse=True),
+                    unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════
+    # 6. 전화 응대율 일별 추이 (SLA 기준선 포함)
+    # ══════════════════════════════════════════════
+    section_title("SLA 추이 차트")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        card_open(f"전화 일별 응대율 추이 (기준: {_sla_ph_rr}%)",
+                  "빨간 점 = SLA 위반일")
+        if not daily_rr.empty:
+            daily_rr["일자"] = pd.to_datetime(daily_rr["일자_단"])
+            daily_rr["위반"] = daily_rr["응대율"] < _sla_ph_rr
+            fig = go.Figure()
+            fig.add_hline(
+                y=_sla_ph_rr,
+                line=dict(color=COLORS["danger"], width=1.5, dash="dash"),
+                annotation_text=f"목표 {_sla_ph_rr}%",
+                annotation_font=dict(color=COLORS["danger"], size=11)
+            )
+            fig.add_trace(go.Scatter(
+                x=daily_rr["일자"], y=daily_rr["응대율"],
                 mode="lines+markers",
-                line=dict(color=COLORS["danger"], width=2.5, shape="spline", smoothing=0.8),
-                marker=dict(size=5, color="#fff", line=dict(color=COLORS["danger"], width=2)),
-                fill="tozeroy", fillcolor=hex_rgba(COLORS["danger"], 0.07),
-                hovertemplate="<b>%{x}</b><br>위반: %{y}건<extra></extra>"
+                line=dict(color=COLORS["phone"], width=2.5, shape="spline", smoothing=0.8),
+                marker=dict(
+                    size=daily_rr["위반"].apply(lambda x: 10 if x else 5),
+                    color=daily_rr["위반"].apply(lambda x: COLORS["danger"] if x else "#fff"),
+                    line=dict(color=daily_rr["위반"].apply(
+                        lambda x: COLORS["danger"] if x else COLORS["phone"]), width=2)
+                ),
+                hovertemplate="<b>%{x}</b><br>응대율: %{y:.1f}%<extra></extra>"
             ))
-            fig.update_layout(**base_layout(220, ""))
+            lo = base_layout(280, "")
+            lo["yaxis"]["ticksuffix"] = "%"
+            lo["yaxis"]["range"] = [max(0, daily_rr["응대율"].min() - 5), 101]
+            fig.update_layout(**lo)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("데이터 없음")
         card_close()
+
     with c2:
-        card_open(f"채팅 SLA 위반 추이 (>{SLA_CHAT_WAIT}초)")
-        if not ch_daily.empty:
-            fig = go.Figure(go.Scatter(
-                x=ch_daily["일자"], y=ch_daily["채팅위반"],
+        card_open(f"전화 일별 AHT 추이 (기준: {_sla_ph_aht//60}분)",
+                  "빨간 점 = SLA 위반일")
+        if not ph_resp.empty and "일자" in ph_resp.columns:
+            aht_daily = ph_resp.copy()
+            aht_daily["일자"] = pd.to_datetime(aht_daily["일자"], errors="coerce")
+            aht_daily = aht_daily.groupby("일자")["AHT(초)"].mean().reset_index()
+            aht_daily["위반"] = aht_daily["AHT(초)"] > _sla_ph_aht
+            fig2 = go.Figure()
+            fig2.add_hline(
+                y=_sla_ph_aht,
+                line=dict(color=COLORS["danger"], width=1.5, dash="dash"),
+                annotation_text=f"기준 {_sla_ph_aht//60}분",
+                annotation_font=dict(color=COLORS["danger"], size=11)
+            )
+            fig2.add_trace(go.Scatter(
+                x=aht_daily["일자"], y=aht_daily["AHT(초)"],
                 mode="lines+markers",
                 line=dict(color=COLORS["warning"], width=2.5, shape="spline", smoothing=0.8),
-                marker=dict(size=5, color="#fff", line=dict(color=COLORS["warning"], width=2)),
-                fill="tozeroy", fillcolor=hex_rgba(COLORS["warning"], 0.07),
-                hovertemplate="<b>%{x}</b><br>위반: %{y}건<extra></extra>"
+                marker=dict(
+                    size=aht_daily["위반"].apply(lambda x: 10 if x else 5),
+                    color=aht_daily["위반"].apply(lambda x: COLORS["danger"] if x else "#fff"),
+                    line=dict(color=aht_daily["위반"].apply(
+                        lambda x: COLORS["danger"] if x else COLORS["warning"]), width=2)
+                ),
+                text=aht_daily["AHT(초)"].apply(fmt_hms),
+                hovertemplate="<b>%{x}</b><br>AHT: %{text}<extra></extra>"
             ))
-            fig.update_layout(**base_layout(220, ""))
-            st.plotly_chart(fig, use_container_width=True)
+            fig2.update_layout(**base_layout(280, ""))
+            st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("데이터 없음")
         card_close()
-    with c3:
-        card_open("게시판 SLA 위반 추이 (>24h)")
-        if not bo_daily.empty:
-            fig = go.Figure(go.Scatter(
-                x=bo_daily["일자"], y=bo_daily["게시판위반"],
+
+    # 채팅 추이
+    c1, c2 = st.columns(2)
+    with c1:
+        card_open(f"채팅 대기시간 추이 (기준: {_sla_ch_wait//60}분)")
+        if not ch_resp.empty and "일자" in ch_resp.columns:
+            ch_wait_d = ch_resp.groupby("일자")["응답시간(초)"].mean().reset_index()
+            ch_wait_d["위반"] = ch_wait_d["응답시간(초)"] > _sla_ch_wait
+            fig3 = go.Figure()
+            fig3.add_hline(y=_sla_ch_wait, line=dict(color=COLORS["danger"], width=1.5, dash="dash"),
+                           annotation_text=f"기준 {_sla_ch_wait}초",
+                           annotation_font=dict(color=COLORS["danger"], size=11))
+            fig3.add_trace(go.Scatter(
+                x=ch_wait_d["일자"], y=ch_wait_d["응답시간(초)"],
+                mode="lines+markers",
+                line=dict(color=COLORS["chat"], width=2.5, shape="spline", smoothing=0.8),
+                marker=dict(
+                    size=ch_wait_d["위반"].apply(lambda x: 10 if x else 5),
+                    color=ch_wait_d["위반"].apply(lambda x: COLORS["danger"] if x else "#fff"),
+                    line=dict(color=ch_wait_d["위반"].apply(
+                        lambda x: COLORS["danger"] if x else COLORS["chat"]), width=2)
+                ),
+                text=ch_wait_d["응답시간(초)"].apply(fmt_hms),
+                hovertemplate="<b>%{x}</b><br>대기시간: %{text}<extra></extra>"
+            ))
+            fig3.update_layout(**base_layout(260, ""))
+            st.plotly_chart(fig3, use_container_width=True)
+        else:
+            st.info("데이터 없음")
+        card_close()
+
+    with c2:
+        card_open(f"게시판 근무내 리드타임 추이 (기준: {sla_bo_in_h}h)")
+        if not bo_resp.empty and "일자" in bo_resp.columns:
+            bo_in_d = bo_resp.groupby("일자")["근무내리드타임(초)"].mean().reset_index()
+            bo_in_d["위반"] = bo_in_d["근무내리드타임(초)"] > _sla_bo_in
+            fig4 = go.Figure()
+            fig4.add_hline(y=_sla_bo_in, line=dict(color=COLORS["danger"], width=1.5, dash="dash"),
+                           annotation_text=f"기준 {sla_bo_in_h}h",
+                           annotation_font=dict(color=COLORS["danger"], size=11))
+            fig4.add_trace(go.Scatter(
+                x=bo_in_d["일자"], y=bo_in_d["근무내리드타임(초)"],
                 mode="lines+markers",
                 line=dict(color=COLORS["board"], width=2.5, shape="spline", smoothing=0.8),
-                marker=dict(size=5, color="#fff", line=dict(color=COLORS["board"], width=2)),
-                fill="tozeroy", fillcolor=hex_rgba(COLORS["board"], 0.07),
-                hovertemplate="<b>%{x}</b><br>위반: %{y}건<extra></extra>"
+                marker=dict(
+                    size=bo_in_d["위반"].apply(lambda x: 10 if x else 5),
+                    color=bo_in_d["위반"].apply(lambda x: COLORS["danger"] if x else "#fff"),
+                    line=dict(color=bo_in_d["위반"].apply(
+                        lambda x: COLORS["danger"] if x else COLORS["board"]), width=2)
+                ),
+                text=bo_in_d["근무내리드타임(초)"].apply(fmt_hms),
+                hovertemplate="<b>%{x}</b><br>근무내LT: %{text}<extra></extra>"
             ))
-            fig.update_layout(**base_layout(220, ""))
-            st.plotly_chart(fig, use_container_width=True)
+            fig4.update_layout(**base_layout(260, ""))
+            st.plotly_chart(fig4, use_container_width=True)
         else:
             st.info("데이터 없음")
         card_close()
 
-    # ── Top 위반 드라이버 ─────────────────────────
+    # ══════════════════════════════════════════════
+    # 7. SLA 위반 드라이버 분석
+    # ══════════════════════════════════════════════
     section_title("SLA 위반 주요 원인 드라이버")
 
-    def breach_drivers(df, time_col, threshold, ch_label):
+    def breach_drivers_by_group(df, time_col, threshold, ch_label):
         if df.empty or time_col not in df.columns:
             return pd.DataFrame()
         tmp = df[df[time_col] > threshold].copy()
         if tmp.empty:
             return pd.DataFrame()
         rows = []
-        for grp_col in ["브랜드","사업자명","대분류"]:
+        for grp_col in ["브랜드", "사업자명", "대분류"]:
             if grp_col in tmp.columns:
                 g = tmp.groupby(grp_col).size().reset_index(name="위반건수")
                 g["구분"] = grp_col
@@ -2379,35 +2596,66 @@ def page_sla_breach(phone, chat, board, unit):
         out["채널"] = ch_label
         return out
 
-    tabs_driver = st.tabs(["📞 전화", "💬 채팅", "📝 게시판"])
-    for tab, (df_r, tcol, thr, lbl) in zip(
-        tabs_driver,
-        [
-            (ph_resp, "대기시간(초)", _sla_phone if _sla_phone else 99999, "전화"),
-            (ch_resp, "응답시간(초)", _sla_chat,                           "채팅"),
-            (bo_resp, "근무내리드타임(초)", _sla_board_in,                 "게시판"),
-        ]
-    ):
-        with tab:
-            drv = breach_drivers(df_r, tcol, thr, lbl)
-            if drv.empty:
-                st.info("위반 데이터 없음")
-                continue
-            for grp in ["브랜드","사업자명","대분류"]:
-                sub = drv[drv["구분"]==grp].head(10)
+    tabs_driver = st.tabs(["📞 전화 AHT 드라이버", "💬 채팅 대기 드라이버", "📝 게시판 드라이버"])
+
+    with tabs_driver[0]:
+        drv = breach_drivers_by_group(ph_resp, "AHT(초)", _sla_ph_aht, "전화")
+        if drv.empty:
+            st.info("위반 데이터 없음")
+        else:
+            for grp in ["브랜드", "사업자명", "대분류"]:
+                sub = drv[drv["구분"] == grp].head(10)
                 if sub.empty:
                     continue
-                card_open(f"{grp}별 SLA 위반 TOP 10")
-                fig = px.bar(
-                    sub, x="위반건수", y="항목", orientation="h",
-                    color="위반건수",
-                    color_continuous_scale=["#fee2e2","#ef4444","#b91c1c"]
-                )
-                fig.update_layout(**base_layout(280,""))
+                card_open(f"{grp}별 AHT SLA 위반 TOP 10")
+                fig = px.bar(sub, x="위반건수", y="항목", orientation="h",
+                             color="위반건수",
+                             color_continuous_scale=["#fee2e2", "#ef4444", "#b91c1c"])
+                fig.update_layout(**base_layout(280, ""))
                 fig.update_traces(marker_line_width=0)
                 fig.update_coloraxes(showscale=False)
                 st.plotly_chart(fig, use_container_width=True)
-                download_csv_button(sub, f"sla_driver_{lbl}_{grp}.csv")
+                download_csv_button(sub, f"sla_driver_전화_{grp}.csv")
+                card_close()
+
+    with tabs_driver[1]:
+        drv = breach_drivers_by_group(ch_resp, "응답시간(초)", _sla_ch_wait, "채팅")
+        if drv.empty:
+            st.info("위반 데이터 없음")
+        else:
+            for grp in ["브랜드", "사업자명", "대분류"]:
+                sub = drv[drv["구분"] == grp].head(10)
+                if sub.empty:
+                    continue
+                card_open(f"{grp}별 채팅 대기시간 위반 TOP 10")
+                fig = px.bar(sub, x="위반건수", y="항목", orientation="h",
+                             color="위반건수",
+                             color_continuous_scale=["#d1fae5", "#22c55e", "#15803d"])
+                fig.update_layout(**base_layout(280, ""))
+                fig.update_traces(marker_line_width=0)
+                fig.update_coloraxes(showscale=False)
+                st.plotly_chart(fig, use_container_width=True)
+                download_csv_button(sub, f"sla_driver_채팅_{grp}.csv")
+                card_close()
+
+    with tabs_driver[2]:
+        drv = breach_drivers_by_group(bo_resp, "근무내리드타임(초)", _sla_bo_in, "게시판")
+        if drv.empty:
+            st.info("위반 데이터 없음")
+        else:
+            for grp in ["브랜드", "사업자명", "대분류"]:
+                sub = drv[drv["구분"] == grp].head(10)
+                if sub.empty:
+                    continue
+                card_open(f"{grp}별 게시판 근무내 LT 위반 TOP 10")
+                fig = px.bar(sub, x="위반건수", y="항목", orientation="h",
+                             color="위반건수",
+                             color_continuous_scale=["#fef3c7", "#f59e0b", "#b45309"])
+                fig.update_layout(**base_layout(280, ""))
+                fig.update_traces(marker_line_width=0)
+                fig.update_coloraxes(showscale=False)
+                st.plotly_chart(fig, use_container_width=True)
+                download_csv_button(sub, f"sla_driver_게시판_{grp}.csv")
                 card_close()
 
 
@@ -2947,143 +3195,319 @@ def page_staffing(phone, chat):
 
     tab_phone, tab_chat = st.tabs(["📞 전화 인력 산정", "💬 채팅 인력 산정"])
 
-    # ── 전화 ──────────────────────────────────────
+    # ══════════════════════════════════════════════
+    # 전화 인력 산정
+    # ══════════════════════════════════════════════
     with tab_phone:
         if phone.empty:
             st.info("전화 데이터가 없습니다.")
         else:
             ph_resp = phone[phone["응대여부"]=="응대"]
-            avg_aht = float(ph_resp["AHT(초)"].mean()) if not ph_resp.empty else 300.0
+            data_avg_att = float(ph_resp["통화시간(초)"].mean()) if not ph_resp.empty else 240.0
+            data_avg_acw = float(ph_resp["ACW시간(초)"].mean())  if not ph_resp.empty else 180.0
+            data_avg_aht = data_avg_att + data_avg_acw
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                target_sl_ph  = st.slider("목표 응대율(%)", 60, 100, 80, 5, key="sl_ph") / 100
-                target_sec_ph = st.number_input("목표 대기시간 이내(초)", 10, 120, 20, 5, key="ts_ph")
-            with c2:
-                interval_ph  = st.selectbox("인터벌(분)", [15,30,60], index=1, key="iv_ph")
-                shrinkage_ph = st.slider("수축률 Shrinkage(%)", 0, 40, 20, 5, key="sh_ph") / 100
-            with c3:
-                custom_aht_ph = st.number_input(
-                    f"평균 AHT(초) [데이터 평균: {avg_aht:.0f}초]",
-                    min_value=30, max_value=3600,
-                    value=int(avg_aht) or 300,
-                    step=30, key="aht_ph"
-                )
+            st.markdown(f"""
+            <div class="alert-card info">
+              <span class="alert-icon">📊</span>
+              <span>데이터 기반 평균 — ATT: <b>{fmt_hms(data_avg_att)}</b> &nbsp;|&nbsp;
+              ACW: <b>{fmt_hms(data_avg_acw)}</b> &nbsp;|&nbsp;
+              AHT: <b>{fmt_hms(data_avg_aht)}</b></span>
+            </div>""", unsafe_allow_html=True)
 
+            # ── 파라미터 설정 ──────────────────────
+            with st.expander("⚙️ 시뮬레이션 파라미터 설정", expanded=True):
+                st.markdown("**📞 처리시간 설정**")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    custom_att = st.number_input(
+                        f"ATT 설정(초) [데이터: {data_avg_att:.0f}초]",
+                        min_value=10, max_value=1800,
+                        value=int(data_avg_att) or 240, step=10, key="stf_ph_att"
+                    )
+                with c2:
+                    custom_acw = st.number_input(
+                        f"ACW 설정(초) [데이터: {data_avg_acw:.0f}초]",
+                        min_value=0, max_value=600,
+                        value=int(data_avg_acw) or 180, step=10, key="stf_ph_acw"
+                    )
+                with c3:
+                    custom_aht_ph = custom_att + custom_acw
+                    st.markdown(f"""
+                    <div style="padding:12px;background:#f8fafc;border-radius:8px;
+                    border:1px solid rgba(226,232,240,0.8);margin-top:24px;">
+                      <div style="font-size:11px;color:#64748b;font-weight:600;">계산된 AHT</div>
+                      <div style="font-size:20px;font-weight:700;color:#0f172a;">{fmt_hms(custom_aht_ph)}</div>
+                    </div>""", unsafe_allow_html=True)
+
+                st.markdown("**🎯 목표 SL 및 인터벌 설정**")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    target_sl_ph = st.slider(
+                        "목표 응대율 (%)", 60, 100, 98, 1, key="sl_ph"
+                    ) / 100
+                with c2:
+                    target_sec_ph = st.number_input(
+                        "목표 대기시간 이내(초)", 5, 120, 20, 5, key="ts_ph"
+                    )
+                with c3:
+                    interval_ph = st.selectbox(
+                        "인터벌(분)", [15, 30, 60], index=1, key="iv_ph"
+                    )
+                with c4:
+                    shrinkage_ph = st.slider(
+                        "수축률 Shrinkage(%)", 0, 40, 20, 5, key="sh_ph"
+                    ) / 100
+
+                st.markdown("**📅 운영시간 설정**")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    ops_start_ph = st.number_input("운영 시작 시간", 0, 23, 10, 1, key="ops_s_ph")
+                with c2:
+                    ops_end_ph   = st.number_input("운영 종료 시간", 1, 24, 18, 1, key="ops_e_ph")
+                with c3:
+                    manual_calls_ph = st.number_input(
+                        "수동 입력: 일평균 인입수 (0=자동)", 0, 100000, 0, 100, key="manual_ph",
+                        help="0 입력 시 데이터 기반 자동 계산"
+                    )
+
+            # ── 계산 ──────────────────────────────
             interval_sec_ph = interval_ph * 60
-            # 인터벌당 평균 인입 계산
-            if "인입시각" in phone.columns:
-                tmp_ph = phone.copy()
-                tmp_ph = tmp_ph[tmp_ph["인입시각"].notna()]
+
+            if manual_calls_ph > 0:
+                ops_hours = max(1, ops_end_ph - ops_start_ph)
+                avg_calls_ph = manual_calls_ph / (ops_hours * 60 / interval_ph)
+            elif "인입시각" in phone.columns:
+                tmp_ph = phone[phone["인입시각"].notna()].copy()
                 tmp_ph["버킷"] = tmp_ph["인입시각"].dt.floor(f"{interval_ph}min")
                 avg_calls_ph = tmp_ph.groupby("버킷").size().mean()
             else:
-                avg_calls_ph = len(phone) / max(1, (phone["일자"].nunique() * (8 * 60 / interval_ph)))
+                avg_calls_ph = len(phone) / max(1, phone["일자"].nunique() * (8 * 60 / interval_ph))
 
-            traffic_ph = avg_calls_ph * custom_aht_ph / interval_sec_ph
-            req_agents_raw = required_agents_erlang(
-                avg_calls_ph, custom_aht_ph, interval_sec_ph,
-                target_sl_ph, target_sec_ph
-            )
-            req_agents_net = math.ceil(req_agents_raw / (1 - shrinkage_ph))
-            sl_achieved = service_level_erlang(req_agents_raw, traffic_ph, custom_aht_ph, target_sec_ph)
+            traffic_ph     = avg_calls_ph * custom_aht_ph / interval_sec_ph
+            req_raw_ph     = required_agents_erlang(avg_calls_ph, custom_aht_ph, interval_sec_ph, target_sl_ph, target_sec_ph)
+            req_net_ph     = math.ceil(req_raw_ph / (1 - shrinkage_ph)) if shrinkage_ph < 1 else req_raw_ph
+            sl_achieved_ph = service_level_erlang(req_raw_ph, traffic_ph, custom_aht_ph, target_sec_ph)
 
+            # ── 결과 KPI ──────────────────────────
             section_title("전화 인력 산정 결과")
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             with c1: st.markdown(kpi_card("인터벌당 평균 인입", f"{avg_calls_ph:.1f}", unit="건", accent="blue"), unsafe_allow_html=True)
             with c2: st.markdown(kpi_card("트래픽 강도(A)", f"{traffic_ph:.2f}", unit="Erl", accent="orange"), unsafe_allow_html=True)
-            with c3: st.markdown(kpi_card("순수 필요 인원", fmt_num(req_agents_raw), unit="명", accent="green"), unsafe_allow_html=True)
-            with c4: st.markdown(kpi_card(f"수축률({shrinkage_ph*100:.0f}%) 반영", fmt_num(req_agents_net), unit="명", accent="red"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi_card("AHT(ATT+ACW)", fmt_hms(custom_aht_ph), accent="blue"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi_card("순수 필요 인원", fmt_num(req_raw_ph), unit="명", accent="green"), unsafe_allow_html=True)
+            with c5: st.markdown(kpi_card(f"수축률({shrinkage_ph*100:.0f}%) 반영", fmt_num(req_net_ph), unit="명", accent="red"), unsafe_allow_html=True)
 
             st.markdown(f"""
-            <div class="alert-card {'success' if sl_achieved >= target_sl_ph else 'danger'}">
-              <span class="alert-icon">{'✅' if sl_achieved >= target_sl_ph else '❌'}</span>
+            <div class="alert-card {'success' if sl_achieved_ph >= target_sl_ph else 'danger'}">
+              <span class="alert-icon">{'✅' if sl_achieved_ph >= target_sl_ph else '❌'}</span>
               <span>목표 SL <b>{target_sl_ph*100:.0f}%</b> @ <b>{target_sec_ph}초</b> 이내 &nbsp;→&nbsp;
-              달성 SL: <b>{sl_achieved*100:.1f}%</b> (순수 {req_agents_raw}명 기준)</span>
+              달성 예측 SL: <b>{sl_achieved_ph*100:.1f}%</b> (순수 {req_raw_ph}명 기준)</span>
             </div>""", unsafe_allow_html=True)
 
-            # 시간대별 필요 인원 테이블
+            # ── 시간대별 필요 인원 ─────────────────
             if "인입시각" in phone.columns:
                 section_title("시간대별 필요 인원 추정")
-                tmp_ph = phone.copy()
-                tmp_ph = tmp_ph[tmp_ph["인입시각"].notna()]
-                tmp_ph["시간대"] = tmp_ph["인입시각"].dt.hour
-                hourly_calls = tmp_ph.groupby("시간대").size() / max(1, phone["일자"].nunique())
+                tmp_ph2 = phone[phone["인입시각"].notna()].copy()
+                tmp_ph2["시간대"] = tmp_ph2["인입시각"].dt.hour
+                hourly_calls = tmp_ph2.groupby("시간대").size() / max(1, phone["일자"].nunique())
+
                 rows_staff = []
                 for hr, calls in hourly_calls.items():
-                    calls_per_iv = calls * interval_ph / 60
-                    n_raw = required_agents_erlang(
-                        calls_per_iv, custom_aht_ph, interval_sec_ph,
-                        target_sl_ph, target_sec_ph
-                    )
-                    n_net = math.ceil(n_raw / (1 - shrinkage_ph))
+                    calls_iv = calls * interval_ph / 60
+                    n_raw = required_agents_erlang(calls_iv, custom_aht_ph, interval_sec_ph, target_sl_ph, target_sec_ph)
+                    n_net = math.ceil(n_raw / (1 - shrinkage_ph)) if shrinkage_ph < 1 else n_raw
+                    sl_hr = service_level_erlang(n_raw, calls_iv * custom_aht_ph / interval_sec_ph, custom_aht_ph, target_sec_ph)
                     rows_staff.append({
-                        "시간대": f"{hr:02d}:00",
-                        f"평균인입({interval_ph}분)": round(calls_per_iv,1),
-                        "순수 필요인원": n_raw,
-                        "수축률 반영": n_net,
+                        "시간대":           f"{hr:02d}:00",
+                        f"평균인입({interval_ph}분)": round(calls_iv, 1),
+                        "트래픽(Erl)":      round(calls_iv * custom_aht_ph / interval_sec_ph, 2),
+                        "순수 필요인원":    n_raw,
+                        "수축률 반영":      n_net,
+                        "예상SL(%)":        round(sl_hr * 100, 1),
                     })
+
                 staff_df = pd.DataFrame(rows_staff)
                 card_open("시간대별 인력 산정 테이블")
-                st.dataframe(staff_df, use_container_width=True, height=340)
+
+                # 필요 인원 막대 차트
+                fig_staff = go.Figure()
+                fig_staff.add_trace(go.Bar(
+                    x=staff_df["시간대"], y=staff_df["수축률 반영"],
+                    name="수축률 반영 인원", marker_color=COLORS["danger"], marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>필요인원: %{y}명<extra></extra>"
+                ))
+                fig_staff.add_trace(go.Bar(
+                    x=staff_df["시간대"], y=staff_df["순수 필요인원"],
+                    name="순수 필요인원", marker_color=COLORS["primary"], marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>순수인원: %{y}명<extra></extra>"
+                ))
+                lo_s = base_layout(260, "")
+                lo_s["barmode"] = "overlay"
+                fig_staff.update_layout(**lo_s)
+                st.plotly_chart(fig_staff, use_container_width=True)
+
+                st.dataframe(staff_df, use_container_width=True, height=320)
                 download_csv_button(staff_df, "staffing_phone_hourly.csv")
                 card_close()
 
-    # ── 채팅 ──────────────────────────────────────
+            # ── 민감도 분석: AHT 변화 → 필요 인원 ──
+            section_title("민감도 분석: AHT 변화에 따른 필요 인원")
+            aht_range = range(max(60, custom_aht_ph - 120), custom_aht_ph + 180, 30)
+            sens_rows = []
+            for aht_v in aht_range:
+                n = required_agents_erlang(avg_calls_ph, aht_v, interval_sec_ph, target_sl_ph, target_sec_ph)
+                n_net_v = math.ceil(n / (1 - shrinkage_ph)) if shrinkage_ph < 1 else n
+                sens_rows.append({"AHT(초)": aht_v, "AHT(표시)": fmt_hms(aht_v),
+                                   "순수인원": n, "수축률반영": n_net_v})
+            sens_df = pd.DataFrame(sens_rows)
+            card_open("AHT 민감도 분석", "AHT가 낮아질수록 필요 인원 감소")
+            fig_sens = go.Figure()
+            fig_sens.add_trace(go.Scatter(
+                x=sens_df["AHT(초)"], y=sens_df["수축률반영"],
+                mode="lines+markers",
+                line=dict(color=COLORS["danger"], width=2.5),
+                marker=dict(size=6, color="#fff", line=dict(color=COLORS["danger"], width=2)),
+                name="수축률 반영",
+                hovertemplate="AHT: <b>%{x}초</b><br>필요인원: <b>%{y}명</b><extra></extra>"
+            ))
+            fig_sens.add_vline(
+                x=custom_aht_ph,
+                line=dict(color=COLORS["primary"], width=2, dash="dash"),
+                annotation_text=f"현재 AHT {fmt_hms(custom_aht_ph)}",
+                annotation_font=dict(size=11, color=COLORS["primary"])
+            )
+            fig_sens.update_layout(**base_layout(260, ""))
+            st.plotly_chart(fig_sens, use_container_width=True)
+            card_close()
+
+    # ══════════════════════════════════════════════
+    # 채팅 인력 산정
+    # ══════════════════════════════════════════════
     with tab_chat:
         if chat.empty:
             st.info("채팅 데이터가 없습니다.")
         else:
             ch_resp = chat[chat["응대여부"]=="응대"]
-            avg_lt_chat = float(ch_resp["리드타임(초)"].mean()) if not ch_resp.empty else 600.0
+            data_avg_wait_ch = float(ch_resp["응답시간(초)"].mean()) if not ch_resp.empty else 120.0
+            data_avg_lt_ch   = float(ch_resp["리드타임(초)"].mean())  if not ch_resp.empty else 1500.0
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                target_sl_ch  = st.slider("목표 응대율(%)", 60, 100, 80, 5, key="sl_ch") / 100
-                target_sec_ch = st.number_input("목표 대기시간 이내(초)", 10, 300, 60, 10, key="ts_ch")
-            with c2:
-                interval_ch  = st.selectbox("인터벌(분)", [15,30,60], index=1, key="iv_ch")
-                concurrency  = st.slider("동시처리 수 (채팅 동시응대)", 1, 5, 2, 1, key="conc_ch")
-                shrinkage_ch = st.slider("수축률 Shrinkage(%)", 0, 40, 20, 5, key="sh_ch") / 100
-            with c3:
-                custom_lt_ch = st.number_input(
-                    f"평균 리드타임(초) [데이터 평균: {avg_lt_chat:.0f}초]",
-                    min_value=30, max_value=7200,
-                    value=int(avg_lt_chat) or 600,
-                    step=30, key="lt_ch"
+            st.markdown(f"""
+            <div class="alert-card info">
+              <span class="alert-icon">📊</span>
+              <span>데이터 기반 평균 — 대기시간: <b>{fmt_hms(data_avg_wait_ch)}</b> &nbsp;|&nbsp;
+              리드타임: <b>{fmt_hms(data_avg_lt_ch)}</b></span>
+            </div>""", unsafe_allow_html=True)
+
+            with st.expander("⚙️ 시뮬레이션 파라미터 설정", expanded=True):
+                st.markdown("**💬 처리시간 설정**")
+                c1, c2 = st.columns(2)
+                with c1:
+                    custom_wait_ch = st.number_input(
+                        f"목표 대기시간(초) [데이터: {data_avg_wait_ch:.0f}초]",
+                        min_value=10, max_value=600,
+                        value=int(data_avg_wait_ch) or 120, step=10, key="stf_ch_wait"
+                    )
+                with c2:
+                    custom_lt_ch = st.number_input(
+                        f"평균 리드타임(초) [데이터: {data_avg_lt_ch:.0f}초]",
+                        min_value=60, max_value=7200,
+                        value=int(data_avg_lt_ch) or 1500, step=60, key="stf_ch_lt"
+                    )
+
+                st.markdown("**🎯 목표 SL 및 인터벌 설정**")
+                c1, c2, c3, c4, c5 = st.columns(5)
+                with c1:
+                    target_sl_ch = st.slider(
+                        "목표 응대율 (%)", 60, 100, 80, 5, key="sl_ch"
+                    ) / 100
+                with c2:
+                    target_sec_ch = st.number_input(
+                        "목표 대기시간 이내(초)", 10, 300, 60, 10, key="ts_ch"
+                    )
+                with c3:
+                    interval_ch = st.selectbox(
+                        "인터벌(분)", [15, 30, 60], index=1, key="iv_ch"
+                    )
+                with c4:
+                    concurrency = st.slider(
+                        "동시처리 수", 1, 5, 2, 1, key="conc_ch",
+                        help="상담사 1명이 동시에 처리하는 채팅 수"
+                    )
+                with c5:
+                    shrinkage_ch = st.slider(
+                        "수축률(%)", 0, 40, 20, 5, key="sh_ch"
+                    ) / 100
+
+                st.markdown("**📅 기타 설정**")
+                manual_calls_ch = st.number_input(
+                    "수동 입력: 일평균 인입수 (0=자동)", 0, 100000, 0, 100, key="manual_ch"
                 )
 
+            # ── 계산 ──────────────────────────────
             interval_sec_ch = interval_ch * 60
-            if "접수일시" in chat.columns:
-                tmp_ch = chat.copy()
-                tmp_ch = tmp_ch[tmp_ch["접수일시"].notna()]
+            eff_aht_ch = custom_lt_ch / concurrency
+
+            if manual_calls_ch > 0:
+                avg_calls_ch = manual_calls_ch / (8 * 60 / interval_ch)
+            elif "접수일시" in chat.columns:
+                tmp_ch = chat[chat["접수일시"].notna()].copy()
                 tmp_ch["버킷"] = tmp_ch["접수일시"].dt.floor(f"{interval_ch}min")
                 avg_calls_ch = tmp_ch.groupby("버킷").size().mean()
             else:
-                avg_calls_ch = len(chat) / max(1, (chat["일자"].nunique() * (8 * 60 / interval_ch)))
+                avg_calls_ch = len(chat) / max(1, chat["일자"].nunique() * (8 * 60 / interval_ch))
 
-            # 채팅은 동시처리를 고려: 실효 AHT = LT / concurrency
-            eff_aht_ch = custom_lt_ch / concurrency
-            traffic_ch = avg_calls_ch * eff_aht_ch / interval_sec_ch
-            req_agents_ch_raw = required_agents_erlang(
-                avg_calls_ch, eff_aht_ch, interval_sec_ch,
-                target_sl_ch, target_sec_ch
-            )
-            req_agents_ch_net = math.ceil(req_agents_ch_raw / (1 - shrinkage_ch))
+            traffic_ch     = avg_calls_ch * eff_aht_ch / interval_sec_ch
+            req_raw_ch     = required_agents_erlang(avg_calls_ch, eff_aht_ch, interval_sec_ch, target_sl_ch, target_sec_ch)
+            req_net_ch     = math.ceil(req_raw_ch / (1 - shrinkage_ch)) if shrinkage_ch < 1 else req_raw_ch
 
             section_title("채팅 인력 산정 결과")
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             with c1: st.markdown(kpi_card("인터벌당 평균 인입", f"{avg_calls_ch:.1f}", unit="건", accent="green"), unsafe_allow_html=True)
             with c2: st.markdown(kpi_card("트래픽 강도(A)", f"{traffic_ch:.2f}", unit="Erl", accent="orange"), unsafe_allow_html=True)
-            with c3: st.markdown(kpi_card("순수 필요 인원", fmt_num(req_agents_ch_raw), unit="명", accent="green"), unsafe_allow_html=True)
-            with c4: st.markdown(kpi_card(f"수축률 반영", fmt_num(req_agents_ch_net), unit="명", accent="red"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi_card(f"실효 AHT(÷{concurrency})", fmt_hms(eff_aht_ch), accent="green"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi_card("순수 필요 인원", fmt_num(req_raw_ch), unit="명", accent="green"), unsafe_allow_html=True)
+            with c5: st.markdown(kpi_card("수축률 반영", fmt_num(req_net_ch), unit="명", accent="red"), unsafe_allow_html=True)
 
             st.markdown(f"""
             <div class="alert-card info">
               <span class="alert-icon">💡</span>
-              <span>동시처리 {concurrency}회 적용 → 실효 AHT = {eff_aht_ch:.0f}초.
-              Erlang-C는 단일 대기열 가정이므로 채팅 동시처리 환경에서는 <b>실제 필요 인원이 더 낮을 수 있습니다.</b></span>
+              <span>동시처리 <b>{concurrency}회</b> 적용 → 실효 AHT = <b>{fmt_hms(eff_aht_ch)}</b>.
+              Erlang-C는 단일 대기열 가정이므로 채팅 동시처리 환경에서는 실제 필요 인원이 더 낮을 수 있습니다.</span>
             </div>""", unsafe_allow_html=True)
+
+            # 시간대별 채팅 인력
+            if "접수일시" in chat.columns:
+                section_title("시간대별 채팅 필요 인원")
+                tmp_ch2 = chat[chat["접수일시"].notna()].copy()
+                tmp_ch2["시간대"] = tmp_ch2["접수일시"].dt.hour
+                ch_hourly = tmp_ch2.groupby("시간대").size() / max(1, chat["일자"].nunique())
+
+                rows_ch_staff = []
+                for hr, calls in ch_hourly.items():
+                    calls_iv = calls * interval_ch / 60
+                    eff = custom_lt_ch / concurrency
+                    n = required_agents_erlang(calls_iv, eff, interval_sec_ch, target_sl_ch, target_sec_ch)
+                    n_net_v = math.ceil(n / (1 - shrinkage_ch)) if shrinkage_ch < 1 else n
+                    rows_ch_staff.append({
+                        "시간대": f"{hr:02d}:00",
+                        f"평균인입({interval_ch}분)": round(calls_iv, 1),
+                        "순수 필요인원": n,
+                        "수축률 반영": n_net_v,
+                    })
+
+                ch_staff_df = pd.DataFrame(rows_ch_staff)
+                card_open("채팅 시간대별 인력 산정")
+                fig_cs = go.Figure(go.Bar(
+                    x=ch_staff_df["시간대"], y=ch_staff_df["수축률 반영"],
+                    marker_color=COLORS["chat"], marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>필요인원: %{y}명<extra></extra>"
+                ))
+                fig_cs.update_layout(**base_layout(240, ""))
+                st.plotly_chart(fig_cs, use_container_width=True)
+                st.dataframe(ch_staff_df, use_container_width=True, height=300)
+                download_csv_button(ch_staff_df, "staffing_chat_hourly.csv")
+                card_close()
 
 
 # ══════════════════════════════════════════════
