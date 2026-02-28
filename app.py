@@ -3295,13 +3295,13 @@ def page_staffing(phone, chat):
                     custom_att = st.number_input(
                         f"ATT 설정(초) [데이터: {data_avg_att:.0f}초]",
                         min_value=10, max_value=1800,
-                        value=int(data_avg_att) or 240, step=10, key="stf_ph_att"
+                        value=max(10, min(1800, int(data_avg_att) or 240)), step=10, key="stf_ph_att"
                     )
                 with c2:
                     custom_acw = st.number_input(
                         f"ACW 설정(초) [데이터: {data_avg_acw:.0f}초]",
                         min_value=0, max_value=600,
-                        value=int(data_avg_acw) or 180, step=10, key="stf_ph_acw"
+                        value=max(0, min(600, int(data_avg_acw) or 180)), step=10, key="stf_ph_acw"
                     )
                 with c3:
                     custom_aht_ph = custom_att + custom_acw
@@ -3478,13 +3478,13 @@ def page_staffing(phone, chat):
                     custom_wait_ch = st.number_input(
                         f"목표 대기시간(초) [데이터: {data_avg_wait_ch:.0f}초]",
                         min_value=10, max_value=600,
-                        value=int(data_avg_wait_ch) or 120, step=10, key="stf_ch_wait"
+                        value=max(10, min(600, int(data_avg_wait_ch) or 120)), step=10, key="stf_ch_wait"
                     )
                 with c2:
                     custom_lt_ch = st.number_input(
                         f"평균 리드타임(초) [데이터: {data_avg_lt_ch:.0f}초]",
                         min_value=60, max_value=7200,
-                        value=int(data_avg_lt_ch) or 1500, step=60, key="stf_ch_lt"
+                        value=max(60, min(7200, int(data_avg_lt_ch) or 1500)), step=60, key="stf_ch_lt"
                     )
 
                 st.markdown("**🎯 목표 SL 및 인터벌 설정**")
@@ -4865,53 +4865,213 @@ def page_ops_structure(phone, chat, board):
         st.markdown("""
         <div class="alert-card info">
           <span class="alert-icon">🔮</span>
-          <span>최근 2주 요일 패턴 기반 <b>7일 인입량 예측</b> 및 필요 리소스 추정입니다.</span>
+          <span>실제 투입 상담사 수와 SLA 기반 Erlang-C 필요인원을 함께 보여줍니다.
+          전화·채팅은 주말(토·일) 인입 0 처리, 게시판은 주말 포함입니다.</span>
         </div>""", unsafe_allow_html=True)
 
-        def forecast_channel(df, label, aht_col):
-            if df.empty or "일자" not in df.columns: return
+        # ── Forecasting 파라미터 설정 ─────────────
+        with st.expander("⚙️ 예측 파라미터 설정", expanded=False):
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            with fc1:
+                fc_target_rr = st.slider("목표 응대율 (%)", 80, 100, 98, 1, key="fc_rr")
+            with fc2:
+                fc_target_sec = st.number_input("목표 대기시간 이내 (초)", 5, 120, 20, 5, key="fc_sec")
+            with fc3:
+                fc_interval = st.selectbox("인터벌 (분)", [15, 30, 60], index=1, key="fc_iv")
+            with fc4:
+                fc_shrinkage = st.slider("수축률 (%)", 0, 40, 20, 5, key="fc_sh") / 100
+
+        def forecast_channel(df, label, aht_col, exclude_weekend=True):
+            if df.empty or "일자" not in df.columns:
+                return
             df2 = df.copy()
             df2["일자"] = pd.to_datetime(df2["일자"], errors="coerce")
+            df2["요일번호"] = df2["일자"].dt.dayofweek  # 0=월 … 6=일
+
+            # ── 1. 실제 일별 인입수 & 투입 상담사 수 ──
             daily_cnt = df2.groupby("일자").size().reset_index(name="인입수")
-            if len(daily_cnt) < 7:
-                st.info(f"{label}: 예측에 필요한 데이터 7일 이상 필요"); return
-            daily_cnt["요일"] = daily_cnt["일자"].dt.dayofweek
-            recent = daily_cnt.tail(14)
-            dow_avg = recent.groupby("요일")["인입수"].mean()
-            overall_avg = recent["인입수"].mean()
+            daily_cnt["요일번호"] = daily_cnt["일자"].dt.dayofweek
+
+            # 실제 고유 상담사 수 (응대 건 기준)
+            if "상담사명" in df2.columns and "응대여부" in df2.columns:
+                daily_agents = (
+                    df2[df2["응대여부"]=="응대"]
+                    .groupby("일자")["상담사명"].nunique()
+                    .reset_index(name="실투입인원")
+                )
+                daily_cnt = daily_cnt.merge(daily_agents, on="일자", how="left")
+                daily_cnt["실투입인원"] = daily_cnt["실투입인원"].fillna(0).astype(int)
+            else:
+                daily_cnt["실투입인원"] = 0
+
+            # 실제 일별 응대율
+            if "응대여부" in df2.columns:
+                daily_rr = df2.groupby("일자").apply(
+                    lambda x: round((x["응대여부"]=="응대").sum()/len(x)*100, 1)
+                ).reset_index(name="응대율(%)")
+                daily_cnt = daily_cnt.merge(daily_rr, on="일자", how="left")
+
+            if len(daily_cnt) < 5:
+                st.info(f"{label}: 예측에 필요한 데이터 5일 이상 필요")
+                return
+
+            # ── 2. 요일별 평균 (주말 제로 처리) ──────
+            if exclude_weekend:
+                weekday_data = daily_cnt[daily_cnt["요일번호"] < 5]  # 평일만
+            else:
+                weekday_data = daily_cnt
+
+            dow_avg_calls = weekday_data.groupby("요일번호")["인입수"].mean()
+            dow_avg_agents = weekday_data.groupby("요일번호")["실투입인원"].mean() if "실투입인원" in weekday_data.columns else pd.Series()
+
+            # ── 3. Erlang-C 기반 필요인원 계산 ───────
+            resp_df = df[df["응대여부"]=="응대"] if "응대여부" in df.columns else df
+            avg_aht = float(resp_df[aht_col].mean()) if (not resp_df.empty and aht_col in resp_df.columns) else 300.0
+            interval_sec = fc_interval * 60
+            target_sl    = fc_target_rr / 100
+            target_sec   = fc_target_sec
+
+            # ── 4. 향후 7일 예측 ─────────────────────
             last_date = daily_cnt["일자"].max()
             fc_rows = []
             for d in range(1, 8):
                 fd = last_date + timedelta(days=d)
                 dow = fd.dayofweek
-                pred = int(round(dow_avg.get(dow, overall_avg)))
-                fc_rows.append({"날짜":fd, "요일":["월","화","수","목","금","토","일"][dow],
-                                "예측 인입수":pred})
+                dow_kr = ["월","화","수","목","금","토","일"][dow]
+                is_weekend = (dow >= 5)
+
+                # 주말 인입 처리
+                if exclude_weekend and is_weekend:
+                    pred_calls = 0
+                else:
+                    pred_calls = int(round(dow_avg_calls.get(dow, weekday_data["인입수"].mean() if not weekday_data.empty else 0)))
+
+                # 과거 같은 요일 실투입인원 평균
+                past_agents = int(round(dow_avg_agents.get(dow, 0))) if not dow_avg_agents.empty else 0
+
+                # Erlang-C 필요인원
+                if pred_calls > 0:
+                    calls_per_iv = pred_calls / (8 * 60 / fc_interval)  # 일 인입 → 인터벌당
+                    erlang_raw = required_agents_erlang(calls_per_iv, avg_aht, interval_sec, target_sl, target_sec)
+                    erlang_net = max(1, math.ceil(erlang_raw / (1 - fc_shrinkage))) if fc_shrinkage < 1 else erlang_raw
+                else:
+                    erlang_raw = 0
+                    erlang_net = 0
+
+                fc_rows.append({
+                    "날짜":           fd,
+                    "요일":           dow_kr,
+                    "주말여부":       "주말" if is_weekend else "평일",
+                    "예측 인입수":    pred_calls,
+                    "과거 실투입인원": past_agents,
+                    f"Erlang 필요인원\n(SLA {fc_target_rr}%@{fc_target_sec}s)": erlang_net,
+                })
+
             fc_df = pd.DataFrame(fc_rows)
-            resp_df = df[df["응대여부"]=="응대"] if "응대여부" in df.columns else df
-            if not resp_df.empty and aht_col in resp_df.columns:
-                avg_aht = float(resp_df[aht_col].mean())
-                fc_df["예측 필요인원"] = (fc_df["예측 인입수"]*avg_aht/28800).apply(lambda x: max(1,int(round(x*1.2))))
-            card_open(f"{label} 7일 예측")
-            fig_fc = go.Figure()
-            fig_fc.add_trace(go.Scatter(x=recent["일자"], y=recent["인입수"],
-                                        mode="lines+markers", name="실제",
-                                        line=dict(color=COLORS["primary"], width=2),
-                                        marker=dict(size=5)))
-            fig_fc.add_trace(go.Scatter(x=fc_df["날짜"], y=fc_df["예측 인입수"],
-                                        mode="lines+markers", name="예측",
-                                        line=dict(color=COLORS["warning"], width=2, dash="dot"),
-                                        marker=dict(size=7, symbol="diamond")))
-            fig_fc.update_layout(**base_layout(280,""))
+            erlang_col = [c for c in fc_df.columns if "Erlang" in c][0]
+
+            # ── 5. 차트 ───────────────────────────────
+            card_open(f"{label} 7일 예측 — 인입수 & 필요인원")
+
+            # 서브플롯: 위=인입수, 아래=인원
+            from plotly.subplots import make_subplots
+            fig_fc = make_subplots(
+                rows=2, cols=1,
+                shared_xaxes=True,
+                row_heights=[0.55, 0.45],
+                vertical_spacing=0.06,
+            )
+
+            # 실제 최근 인입수 (최대 21일)
+            recent = daily_cnt.tail(21)
+            fig_fc.add_trace(go.Scatter(
+                x=recent["일자"], y=recent["인입수"],
+                name="실제 인입수", mode="lines+markers",
+                line=dict(color=COLORS["primary"], width=2),
+                marker=dict(size=4, color=COLORS["primary"]),
+            ), row=1, col=1)
+
+            # 예측 인입수
+            fc_color = [COLORS["warning"] if r["주말여부"]=="평일" else "#94a3b8" for _, r in fc_df.iterrows()]
+            fig_fc.add_trace(go.Bar(
+                x=fc_df["날짜"], y=fc_df["예측 인입수"],
+                name="예측 인입수",
+                marker_color=fc_color, marker_line_width=0,
+                opacity=0.75,
+            ), row=1, col=1)
+
+            # 과거 실투입인원
+            if fc_df["과거 실투입인원"].sum() > 0:
+                fig_fc.add_trace(go.Bar(
+                    x=fc_df["날짜"], y=fc_df["과거 실투입인원"],
+                    name="과거 실투입인원 (요일 평균)",
+                    marker_color=COLORS["success"], marker_line_width=0, opacity=0.7,
+                ), row=2, col=1)
+
+            # Erlang 필요인원
+            fig_fc.add_trace(go.Scatter(
+                x=fc_df["날짜"], y=fc_df[erlang_col],
+                name=f"Erlang 필요인원 (SLA {fc_target_rr}%)",
+                mode="lines+markers",
+                line=dict(color=COLORS["danger"], width=2, dash="dot"),
+                marker=dict(size=7, symbol="diamond", color=COLORS["danger"]),
+            ), row=2, col=1)
+
+            lo_fc = dict(
+                height=380, plot_bgcolor="#fff", paper_bgcolor="#fff",
+                font=dict(family="Inter", size=11, color="#374151"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                            font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+                margin=dict(t=10, b=10, l=0, r=0),
+                barmode="overlay",
+            )
+            fig_fc.update_layout(**lo_fc)
+            fig_fc.update_xaxes(showgrid=False)
+            fig_fc.update_yaxes(showgrid=True, gridcolor="rgba(226,232,240,0.6)",
+                                 gridwidth=1, zeroline=False)
             st.plotly_chart(fig_fc, use_container_width=True)
-            st.dataframe(fc_df, use_container_width=True, height=240)
-            download_csv_button(fc_df, f"forecast_{label}.csv")
+
+            # ── 6. 테이블 ─────────────────────────────
+            # 주말 강조
+            def highlight_weekend(row):
+                if row["주말여부"] == "주말":
+                    return ["background-color:#f8fafc; color:#94a3b8"] * len(row)
+                return [""] * len(row)
+
+            disp_df = fc_df.drop(columns=["주말여부"]).copy()
+            disp_df["날짜"] = disp_df["날짜"].dt.strftime("%m/%d (%a)")
+            st.dataframe(
+                disp_df.style.apply(
+                    lambda row: ["background-color:#f8fafc;color:#94a3b8"]*len(row)
+                    if row["요일"] in ["토","일"] else [""]*len(row),
+                    axis=1
+                ),
+                use_container_width=True, height=240
+            )
+
+            # 과거 대비 갭 경고
+            if fc_df["과거 실투입인원"].sum() > 0:
+                weekday_fc = fc_df[fc_df["주말여부"]=="평일"]
+                avg_past   = weekday_fc["과거 실투입인원"].mean()
+                avg_erlang = weekday_fc[erlang_col].mean()
+                gap = avg_erlang - avg_past
+                if abs(gap) >= 1:
+                    direction = "부족" if gap > 0 else "여유"
+                    color_cls = "danger" if gap > 0 else "info"
+                    st.markdown(f"""
+                    <div class="alert-card {color_cls}">
+                      <span class="alert-icon">{'⚠️' if gap>0 else '💡'}</span>
+                      <span>SLA 달성 기준 vs 과거 실투입 차이: 평균 <b>{abs(gap):.1f}명 {direction}</b>
+                      (Erlang 기준 {avg_erlang:.1f}명 vs 실제 {avg_past:.1f}명)</span>
+                    </div>""", unsafe_allow_html=True)
+
+            download_csv_button(disp_df, f"forecast_{label}.csv")
             card_close()
 
         tab_ph, tab_ch, tab_bo = st.tabs(["📞 전화","💬 채팅","📝 게시판"])
-        with tab_ph: forecast_channel(phone,"전화","AHT(초)")
-        with tab_ch: forecast_channel(chat, "채팅","리드타임(초)")
-        with tab_bo: forecast_channel(board,"게시판","리드타임(초)")
+        with tab_ph: forecast_channel(phone, "전화",  "AHT(초)",      exclude_weekend=True)
+        with tab_ch: forecast_channel(chat,  "채팅",  "응답시간(초)", exclude_weekend=True)
+        with tab_bo: forecast_channel(board, "게시판","리드타임(초)", exclude_weekend=False)
 
 
 # ══════════════════════════════════════════════
