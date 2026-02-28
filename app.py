@@ -46,9 +46,10 @@ MENU_GROUPS = {
 EXCLUDE_AGENTS = {"이은덕", "양현정", "이혜선", "한인경", "박성주", "엄소라"}
 
 # SLA 임계값
-SLA_PHONE_WAIT  = 20     # 초: 전화 대기시간
-SLA_CHAT_WAIT   = 60     # 초: 채팅 응답시간
-SLA_BOARD_TOTAL = 86400  # 초: 게시판 전체 리드타임 (24h)
+SLA_PHONE_WAIT  = None   # 전화 SLA 미적용
+SLA_CHAT_WAIT   = 120    # 채팅 2분
+SLA_BOARD_IN    = 10800  # 게시판 근무내 3시간
+SLA_BOARD_OFF   = 25200  # 게시판 근무외 7시간
 
 # ══════════════════════════════════════════════
 # 페이지 설정
@@ -1877,7 +1878,7 @@ def page_board(board, unit, month_range, start, end):
     avg_total = resp["리드타임(초)"].mean()        if (not resp.empty and "리드타임(초)" in resp.columns) else 0
 
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    withc1: st.markdown(kpi_card("전체 티켓",      fmt_num(total),    unit="건"),              unsafe_allow_html=True)
+    with c1: st.markdown(kpi_card("전체 티켓",      fmt_num(total),    unit="건"),              unsafe_allow_html=True)
     with c2: st.markdown(kpi_card("응답완료",        fmt_num(rc),       unit="건", accent="green"),  unsafe_allow_html=True)
     with c3: st.markdown(kpi_card("응답률",          fmt_pct(rr),       accent="blue"),          unsafe_allow_html=True)
     with c4: st.markdown(kpi_card("평균 근무내 LT",  fmt_hms(avg_in),   accent="green"),         unsafe_allow_html=True)
@@ -2224,6 +2225,73 @@ def page_agent_total(phone, chat, board):
 def page_sla_breach(phone, chat, board, unit):
     section_title("A1. SLA 위반 지표")
 
+    # ── SLA 슬라이더 UI ──────────────────────────
+    with st.expander("⚙️ SLA 기준값 조정", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("**전화**", unsafe_allow_html=True)
+            phone_sla_on = st.checkbox("전화 SLA 적용", value=False, key="sla_ph_on")
+            sla_phone = st.number_input(
+                "전화 대기시간 기준(초)", 
+                min_value=5, max_value=300, 
+                value=20, step=5, 
+                key="sla_ph_val",
+                disabled=not phone_sla_on
+            )
+        with c2:
+            st.markdown("**채팅**", unsafe_allow_html=True)
+            sla_chat = st.slider(
+                "채팅 응답시간 기준(초)", 
+                min_value=30, max_value=300, 
+                value=120, step=10, 
+                key="sla_ch_val"
+            )
+        with c3:
+            st.markdown("**게시판 근무내**", unsafe_allow_html=True)
+            sla_board_in_h = st.slider(
+                "근무내 기준(시간)", 
+                min_value=1, max_value=12, 
+                value=3, step=1, 
+                key="sla_bo_in"
+            )
+        with c4:
+            st.markdown("**게시판 근무외**", unsafe_allow_html=True)
+            sla_board_off_h = st.slider(
+                "근무외 기준(시간)", 
+                min_value=1, max_value=24, 
+                value=7, step=1, 
+                key="sla_bo_off"
+            )
+
+    # 최종 기준값 결정
+    _sla_phone     = sla_phone if phone_sla_on else None
+    _sla_chat      = sla_chat
+    _sla_board_in  = sla_board_in_h  * 3600
+    _sla_board_off = sla_board_off_h * 3600
+
+    # ── KPI 계산 ────────────────────────────────
+    ph_resp = phone[phone["응대여부"]=="응대"] if not phone.empty else pd.DataFrame()
+    if _sla_phone and not ph_resp.empty:
+        ph_breach_n = int((ph_resp["대기시간(초)"] > _sla_phone).sum())
+        ph_breach_r = ph_breach_n / len(ph_resp) * 100
+    else:
+        ph_breach_n = 0
+        ph_breach_r = 0.0
+
+    ch_resp = chat[chat["응대여부"]=="응대"] if not chat.empty else pd.DataFrame()
+    ch_breach_n = int((ch_resp["응답시간(초)"] > _sla_chat).sum()) if not ch_resp.empty else 0
+    ch_breach_r = ch_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
+
+    bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
+    if not bo_resp.empty:
+        bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
+        bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
+        bo_breach_n = bo_breach_in_n + bo_breach_off_n
+        bo_breach_r = bo_breach_n / len(bo_resp) * 100
+    else:
+        bo_breach_n = 0
+        bo_breach_r = 0.0
+
     # ── KPI 계산 ────────────────────────────────
     # 전화: 대기시간 > 20초
     ph_resp = phone[phone["응대여부"]=="응대"] if not phone.empty else pd.DataFrame()
@@ -2270,9 +2338,9 @@ def page_sla_breach(phone, chat, board, unit):
         out["일자"] = pd.to_datetime(out["일자"])
         return out
 
-    ph_daily = daily_breach(ph_resp, "대기시간(초)", SLA_PHONE_WAIT, "전화위반")
-    ch_daily = daily_breach(ch_resp, "응답시간(초)", SLA_CHAT_WAIT,  "채팅위반")
-    bo_daily = daily_breach(bo_resp, "리드타임(초)", SLA_BOARD_TOTAL,"게시판위반")
+    ph_daily = daily_breach(ph_resp, "대기시간(초)", _sla_phone, "전화위반") if _sla_phone else pd.DataFrame()
+    ch_daily = daily_breach(ch_resp, "응답시간(초)", _sla_chat,  "채팅위반")
+    bo_daily = daily_breach(bo_resp, "리드타임(초)", _sla_board_in + _sla_board_off, "게시판위반")
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -2350,9 +2418,9 @@ def page_sla_breach(phone, chat, board, unit):
     for tab, (df_r, tcol, thr, lbl) in zip(
         tabs_driver,
         [
-            (ph_resp, "대기시간(초)", SLA_PHONE_WAIT, "전화"),
-            (ch_resp, "응답시간(초)", SLA_CHAT_WAIT,  "채팅"),
-            (bo_resp, "리드타임(초)", SLA_BOARD_TOTAL,"게시판"),
+            (ph_resp, "대기시간(초)", _sla_phone if _sla_phone else 99999, "전화"),
+            (ch_resp, "응답시간(초)", _sla_chat,                           "채팅"),
+            (bo_resp, "근무내리드타임(초)", _sla_board_in,                 "게시판"),
         ]
     ):
         with tab:
@@ -3328,8 +3396,6 @@ def page_multichannel(phone, chat, board):
     with c3: st.markdown(kpi_card("단일채널 상담사", fmt_num(len(single_agents)), unit="명", accent="blue"), unsafe_allow_html=True)
 
     # 성과 비교
-    def compare_metric(df_sub, metric_col, agent_set, label):
-        filtered = df_sub
     def compare_metric(df_sub, metric_col, agent_set, label):
         filtered = df_sub[df_sub["상담사명"].isin(agent_set)]
         if filtered.empty or metric_col not in filtered.columns:
