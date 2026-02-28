@@ -2225,59 +2225,44 @@ def page_agent_total(phone, chat, board):
 def page_sla_breach(phone, chat, board, unit):
     section_title("A1. SLA 위반 지표")
 
-    # ── SLA 슬라이더 UI ──────────────────────────
+    # ── 1. 슬라이더 UI ──────────────────────────────
     with st.expander("⚙️ SLA 기준값 조정", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.markdown("**전화**", unsafe_allow_html=True)
             phone_sla_on = st.checkbox("전화 SLA 적용", value=False, key="sla_ph_on")
-            sla_phone = st.number_input(
-                "전화 대기시간 기준(초)", 
-                min_value=5, max_value=300, 
-                value=20, step=5, 
-                key="sla_ph_val",
-                disabled=not phone_sla_on
-            )
+            sla_phone_val = st.number_input("전화 대기시간 기준(초)", min_value=5,
+                                            max_value=300, value=20, step=5,
+                                            key="sla_ph_val", disabled=not phone_sla_on)
         with c2:
-            st.markdown("**채팅**", unsafe_allow_html=True)
-            sla_chat = st.slider(
-                "채팅 응답시간 기준(초)", 
-                min_value=30, max_value=300, 
-                value=120, step=10, 
-                key="sla_ch_val"
-            )
+            sla_chat_val = st.slider("채팅 응답시간 기준(초)", min_value=30,
+                                     max_value=300, value=120, step=10, key="sla_ch_val")
         with c3:
-            st.markdown("**게시판 근무내**", unsafe_allow_html=True)
-            sla_board_in_h = st.slider(
-                "근무내 기준(시간)", 
-                min_value=1, max_value=12, 
-                value=3, step=1, 
-                key="sla_bo_in"
-            )
+            sla_board_in_h = st.slider("근무내 기준(시간)", min_value=1,
+                                       max_value=12, value=3, step=1, key="sla_bo_in")
         with c4:
-            st.markdown("**게시판 근무외**", unsafe_allow_html=True)
-            sla_board_off_h = st.slider(
-                "근무외 기준(시간)", 
-                min_value=1, max_value=24, 
-                value=7, step=1, 
-                key="sla_bo_off"
-            )
+            sla_board_off_h = st.slider("근무외 기준(시간)", min_value=1,
+                                        max_value=24, value=7, step=1, key="sla_bo_off")
 
-    # 최종 기준값 결정
-    _sla_phone     = sla_phone if phone_sla_on else None
-    _sla_chat      = sla_chat
-    _sla_board_in  = sla_board_in_h  * 3600
+    # ── 2. 변수 확정 (반드시 슬라이더 직후, KPI 계산 전) ──
+    _sla_phone     = sla_phone_val if phone_sla_on else None
+    _sla_chat      = sla_chat_val
+    _sla_board_in  = sla_board_in_h * 3600
     _sla_board_off = sla_board_off_h * 3600
 
-    # ── KPI 계산 ────────────────────────────────
+    # ── 3. 데이터 필터 ───────────────────────────────
     ph_resp = phone[phone["응대여부"]=="응대"] if not phone.empty else pd.DataFrame()
-    if _sla_phone and not ph_resp.empty:
-        ph_breach_n = int((ph_resp["대기시간(초)"] > _sla_phone).sum())
-        ph_breach_r = ph_breach_n / len(ph_resp) * 100
-    else:
-        ph_breach_n = 0
-        ph_breach_r = 0.0
+    ch_resp = chat[chat["응대여부"]=="응대"]   if not chat.empty  else pd.DataFrame()
+    bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
 
+    # ── 4. KPI 계산 ──────────────────────────────────
+    if not bo_resp.empty:
+        bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
+        bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
+        bo_breach_n     = bo_breach_in_n + bo_breach_off_n
+        bo_breach_r     = bo_breach_n / len(bo_resp) * 100
+    else:
+        bo_breach_n = 0
+        bo_breach_r = 0.0
     ch_resp = chat[chat["응대여부"]=="응대"] if not chat.empty else pd.DataFrame()
     ch_breach_n = int((ch_resp["응답시간(초)"] > _sla_chat).sum()) if not ch_resp.empty else 0
     ch_breach_r = ch_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
