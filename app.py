@@ -31,17 +31,18 @@ TENURE_GROUPS = [
 ]
 
 MENU_GROUPS = {
-    "전체 현황":   ["전체 현황"],
-    "VOC 분석":    ["VOC 인입 분석"],
-    "사업자":      ["사업자 현황"],
-    "전화":        ["전화 현황","전화 상담사"],
-    "채팅":        ["채팅 현황","채팅 상담사"],
-    "게시판":      ["게시판 현황","게시판 상담사"],
-    "상담사":      ["상담사 종합"],
-    "위험/병목":   ["SLA 위반 분석","이상치 탐지","연속 미응대"],
-    "예측/계획":   ["요일×시간대 패턴","변동성 지수","인력 산정"],
-    "상담사 품질": ["AHT 분산분석","학습곡선","멀티채널 효율"],
-    "운영 비교":   ["비용 시뮬레이터","팀×채널 매트릭스"],
+    "대시보드":        ["전체 현황"],
+    "채널별 현황": [
+        "VOC 인입 분석", "사업자 현황",
+        "전화 현황", "전화 상담사",
+        "채팅 현황", "채팅 상담사",
+        "게시판 현황", "게시판 상담사",
+        "상담사 종합",
+    ],
+    "운영 품질":   ["SLA 위반 분석", "이상치 탐지", "연속 미응대"],
+    "예측·계획":   ["요일×시간대 패턴", "변동성 지수", "인력 산정"],
+    "상담사 역량": ["AHT 분산분석", "학습곡선", "멀티채널 효율"],
+    "운영 구조":   ["비용 시뮬레이터", "팀×채널 매트릭스", "운영 구조 분석"],
 }
 EXCLUDE_AGENTS = {"이은덕", "양현정", "이혜선", "한인경", "박성주", "엄소라"}
 
@@ -114,9 +115,71 @@ section[data-testid="stSidebar"] .stButton > button {
 section[data-testid="stSidebar"] .stButton > button:hover {
     background: rgba(99,102,241,0.15) !important; color: #fff !important;
 }
+/* ── 사이드바 그룹 헤더 ── */
+.sidebar-group-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 10px 7px 8px; margin: 2px 0;
+    border-radius: 7px; cursor: pointer;
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em;
+    color: rgba(148,163,184,0.75);
+    text-transform: uppercase;
+    transition: background 150ms ease, color 150ms ease;
+    user-select: none;
+}
+.sidebar-group-header:hover { background: rgba(255,255,255,0.04); color: #e2e8f0; }
+.sidebar-group-header.open   { color: #c7d2fe; }
+/* ── 그룹 토글 버튼 — 헤더 스타일 ── */
+section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[kind="secondary"]) button {
+    padding: 6px 8px !important;
+    height: 30px !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    color: rgba(148,163,184,0.65) !important;
+    border: none !important;
+    background: transparent !important;
+    border-radius: 6px !important;
+    margin-bottom: 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[kind="secondary"]) button:hover {
+    background: rgba(255,255,255,0.04) !important;
+    color: #e2e8f0 !important;
+    border: none !important;
+}
+/* ── 메뉴 아이템 버튼 ── */
+section[data-testid="stSidebar"] .stButton > button {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 6px !important;
+    color: #94a3b8 !important;
+    width: 100% !important;
+    text-align: left !important;
+    padding: 0 10px !important;
+    height: 32px !important;
+    font-size: 12.5px !important;
+    font-weight: 500 !important;
+    margin-bottom: 1px !important;
+    transition: all 130ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+    letter-spacing: -0.005em !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(99,102,241,0.1) !important;
+    border-color: rgba(99,102,241,0.2) !important;
+    color: #e2e8f0 !important;
+}
+/* 활성 메뉴: 네모 박스 + 보라 배경 */
 .sidebar-active button {
-    background: rgba(99,102,241,0.2) !important; border-left: 2px solid #6366f1 !important;
-    color: #fff !important; font-weight: 600 !important;
+    background: #6366f1 !important;
+    border-color: #6366f1 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.35) !important;
+}
+.sidebar-active button:hover {
+    background: #4f46e5 !important;
+    border-color: #4f46e5 !important;
+    color: #ffffff !important;
 }
 section[data-testid="stSidebar"] .stRadio label { font-size: 13px !important; font-weight: 500 !important; color: #cbd5e1 !important; }
 section[data-testid="stSidebar"] .stDateInput input {
@@ -4567,55 +4630,331 @@ def page_team_channel_matrix(phone, chat, board):
         </div>""", unsafe_allow_html=True)
 
 
+
 # ══════════════════════════════════════════════
-# 사이드바 렌더링 (기존 구조 유지 + 신규 메뉴 추가)
+# ★ 신규 페이지: 운영 구조 분석 (X팀 공고 기반)
+# ══════════════════════════════════════════════
+def page_ops_structure(phone, chat, board):
+    section_title("운영 구조 분석")
+
+    st.markdown("""
+    <div class="alert-card info">
+      <span class="alert-icon">ℹ️</span>
+      <span>운영팀 간 <b>병목·회색지대</b>를 정량화하고,
+      데이터 기반 운영 구조 개선 우선순위를 제시하는 뷰입니다.</span>
+    </div>""", unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "채널별 업무 부하",
+        "회색지대 리스크",
+        "운영 안정성 지수",
+        "리소스 Forecasting",
+    ])
+
+    with tab1:
+        section_title("채널별 총 업무 부하량 (인입량 × 처리시간)")
+        st.markdown("""
+        <div class="alert-card info">
+          <span class="alert-icon">💡</span>
+          <span>총 부하 = 인입건수 × 평균처리시간. 채널별 리소스 배분의 정량적 근거로 사용합니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        rows = []
+        if not phone.empty:
+            ph_r = phone[phone["응대여부"]=="응대"]
+            aht  = float(ph_r["AHT(초)"].mean()) if not ph_r.empty else 0
+            rows.append({"채널":"전화","인입건수":len(phone),"응대건수":len(ph_r),
+                         "평균처리시간(초)":round(aht,1),"총부하(시간)":round(len(ph_r)*aht/3600,1)})
+        if not chat.empty:
+            ch_r = chat[chat["응대여부"]=="응대"]
+            lt   = float(ch_r["리드타임(초)"].mean()) if not ch_r.empty else 0
+            rows.append({"채널":"채팅","인입건수":len(chat),"응대건수":len(ch_r),
+                         "평균처리시간(초)":round(lt,1),"총부하(시간)":round(len(ch_r)*lt/3600,1)})
+        if not board.empty:
+            bo_r = board[board["응대여부"]=="응대"]
+            lt_b = float(bo_r["리드타임(초)"].mean()) if not bo_r.empty else 0
+            rows.append({"채널":"게시판","인입건수":len(board),"응대건수":len(bo_r),
+                         "평균처리시간(초)":round(lt_b,1),"총부하(시간)":round(len(bo_r)*lt_b/3600,1)})
+
+        if not rows:
+            st.info("데이터 없음")
+            return
+
+        load_df = pd.DataFrame(rows)
+        c1, c2, c3 = st.columns(3)
+        for i, row in load_df.iterrows():
+            col = [c1, c2, c3][i]
+            with col:
+                st.markdown(kpi_card(f"{row['채널']} 총부하", f"{row['총부하(시간)']:.1f}",
+                                     unit="h", accent="blue"), unsafe_allow_html=True)
+
+        card_open("채널별 업무 부하 비교")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=load_df["채널"], y=load_df["총부하(시간)"],
+            name="총부하(시간)", marker_color=COLORS["primary"], marker_line_width=0,
+            text=load_df["총부하(시간)"].apply(lambda x: f"{x:.1f}h"), textposition="outside"
+        ))
+        fig.update_layout(**base_layout(300,""))
+        st.plotly_chart(fig, use_container_width=True)
+        fig2 = go.Figure(go.Pie(
+            labels=load_df["채널"], values=load_df["총부하(시간)"], hole=0.55,
+            marker=dict(colors=[COLORS["phone"], COLORS["chat"], COLORS["board"]]),
+            textinfo="label+percent",
+            hovertemplate="<b>%{label}</b><br>%{value:.1f}h (%{percent})<extra></extra>"
+        ))
+        fig2.update_layout(**base_layout(260,""))
+        st.plotly_chart(fig2, use_container_width=True)
+        download_csv_button(load_df, "channel_workload.csv")
+        card_close()
+
+        section_title("일별 채널 부하 추이")
+        def daily_load(df, time_col, label, color):
+            if df.empty or "일자" not in df.columns or time_col not in df.columns:
+                return
+            r = df[df["응대여부"]=="응대"].copy()
+            r["일자"] = pd.to_datetime(r["일자"], errors="coerce")
+            d = r.groupby("일자").apply(lambda x: x[time_col].sum()/3600).reset_index(name="부하(h)")
+            card_open(f"{label} 일별 부하(h)")
+            fig_d = go.Figure(go.Scatter(
+                x=d["일자"], y=d["부하(h)"], mode="lines+markers",
+                line=dict(color=color, width=2.5, shape="spline", smoothing=0.8),
+                marker=dict(size=5, color="#fff", line=dict(color=color, width=2)),
+                fill="tozeroy", fillcolor=hex_rgba(color, 0.07),
+                hovertemplate="<b>%{x}</b><br>부하: %{y:.2f}h<extra></extra>"
+            ))
+            fig_d.update_layout(**base_layout(220,""))
+            st.plotly_chart(fig_d, use_container_width=True)
+            card_close()
+        c1, c2, c3 = st.columns(3)
+        with c1: daily_load(phone, "AHT(초)",     "전화",  COLORS["phone"])
+        with c2: daily_load(chat,  "리드타임(초)", "채팅",  COLORS["chat"])
+        with c3: daily_load(board, "리드타임(초)", "게시판",COLORS["board"])
+
+    with tab2:
+        section_title("브랜드별 채널 응대율 편차 (회색지대 탐지)")
+        st.markdown("""
+        <div class="alert-card warning">
+          <span class="alert-icon">⚠️</span>
+          <span>채널 간 응대율 편차가 크면 운영 기준·역할 정의가 불명확한 <b>회색지대</b>일 가능성이 높습니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        def rr_by_brand(df, label):
+            if df.empty or "브랜드" not in df.columns: return pd.DataFrame()
+            return df.groupby("브랜드").apply(
+                lambda x: (x["응대여부"]=="응대").sum()/len(x)*100
+            ).reset_index(name=f"{label}_응대율")
+
+        ph_rr = rr_by_brand(phone,"전화")
+        ch_rr = rr_by_brand(chat,"채팅")
+        bo_rr = rr_by_brand(board,"게시판")
+
+        if not ph_rr.empty or not ch_rr.empty:
+            all_rr = [r for r in [ph_rr, ch_rr, bo_rr] if not r.empty]
+            merged_rr = all_rr[0]
+            for r in all_rr[1:]:
+                merged_rr = merged_rr.merge(r, on="브랜드", how="outer")
+            merged_rr = merged_rr.fillna(0).round(1)
+            rr_cols = [c for c in merged_rr.columns if "응대율" in c]
+            if len(rr_cols) >= 2:
+                merged_rr["최대편차"] = merged_rr[rr_cols].max(axis=1) - merged_rr[rr_cols].min(axis=1)
+                merged_rr = merged_rr.sort_values("최대편차", ascending=False)
+                card_open("브랜드별 채널 응대율 비교 (편차 큰 순)")
+                fig_rr = go.Figure()
+                colors_ch = [COLORS["phone"], COLORS["chat"], COLORS["board"]]
+                for ci, col in enumerate(rr_cols):
+                    fig_rr.add_trace(go.Bar(x=merged_rr["브랜드"], y=merged_rr[col],
+                                            name=col.replace("_응대율",""),
+                                            marker_color=colors_ch[ci%3], marker_line_width=0))
+                lo = base_layout(320,"")
+                lo["barmode"] = "group"
+                lo["yaxis"]["ticksuffix"] = "%"
+                fig_rr.update_layout(**lo)
+                st.plotly_chart(fig_rr, use_container_width=True)
+                risky = merged_rr[merged_rr["최대편차"] >= 20]
+                if not risky.empty:
+                    st.markdown(f"""<div class="alert-card danger">
+                      <span class="alert-icon">🚨</span>
+                      <span>채널 간 응대율 편차 20%↑ 브랜드 <b>{len(risky)}개</b> — 운영 기준 재검토 필요</span>
+                    </div>""", unsafe_allow_html=True)
+                download_csv_button(merged_rr, "brand_rr_gap.csv")
+                card_close()
+
+        section_title("사업자별 인입-응대 갭 (SOP 공백 탐지)")
+        def op_gap(df, label):
+            if df.empty or "사업자명" not in df.columns: return pd.DataFrame()
+            g = df.groupby("사업자명").apply(lambda x: pd.Series({
+                "인입":len(x), "미응대":int((x["응대여부"]!="응대").sum()),
+                "응대율":round((x["응대여부"]=="응대").sum()/len(x)*100,1)
+            })).reset_index()
+            g["채널"] = label
+            return g
+
+        gap_df = pd.concat([op_gap(phone,"전화"),op_gap(chat,"채팅"),op_gap(board,"게시판")],ignore_index=True)
+        if not gap_df.empty:
+            gap_df = gap_df[gap_df["미응대"]>0].sort_values("미응대",ascending=False)
+            card_open("미응대 상위 사업자 (채널별)")
+            if not gap_df.empty:
+                fig_gap = px.bar(gap_df.head(20), x="미응대", y="사업자명", color="채널",
+                                 orientation="h",
+                                 color_discrete_map={"전화":COLORS["phone"],"채팅":COLORS["chat"],"게시판":COLORS["board"]})
+                fig_gap.update_layout(**base_layout(340,""))
+                fig_gap.update_traces(marker_line_width=0)
+                st.plotly_chart(fig_gap, use_container_width=True)
+                download_csv_button(gap_df, "operator_gap.csv")
+            card_close()
+
+    with tab3:
+        section_title("운영 안정성 지수 (Operational Stability Index)")
+        st.markdown("""
+        <div class="alert-card info">
+          <span class="alert-icon">📊</span>
+          <span>일별 응대율·처리시간의 <b>변동계수(CV)</b> 기반 안정성 지수. 낮을수록 안정적입니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        stab_rows = []
+        def add_stab(df, metric_col, label):
+            if df.empty or "일자" not in df.columns: return
+            r = df[df["응대여부"]=="응대"].copy() if "응대여부" in df.columns else df.copy()
+            if r.empty or metric_col not in r.columns: return
+            r["일자"] = pd.to_datetime(r["일자"], errors="coerce")
+            daily = r.groupby("일자")[metric_col].mean()
+            if len(daily) < 3: return
+            cv = daily.std() / daily.mean() * 100 if daily.mean() > 0 else 0
+            stab_rows.append({"지표":label, "일수":len(daily), "평균":round(daily.mean(),1),
+                               "표준편차":round(daily.std(),1), "변동계수(CV%)":round(cv,1)})
+
+        add_stab(phone, "AHT(초)",              "전화 AHT")
+        add_stab(chat,  "응답시간(초)",          "채팅 대기시간")
+        add_stab(board, "근무내리드타임(초)",     "게시판 근무내LT")
+
+        for df2, lbl2 in [(phone,"전화"),(chat,"채팅"),(board,"게시판")]:
+            if df2.empty or "일자" not in df2.columns: continue
+            df2c = df2.copy()
+            df2c["일자"] = pd.to_datetime(df2c["일자"], errors="coerce")
+            drr = df2c.groupby("일자").apply(lambda x: (x["응대여부"]=="응대").sum()/len(x)*100)
+            if len(drr) >= 3:
+                cv = drr.std()/drr.mean()*100 if drr.mean()>0 else 0
+                stab_rows.append({"지표":f"{lbl2} 응대율", "일수":len(drr),
+                                   "평균":round(drr.mean(),1), "표준편차":round(drr.std(),1),
+                                   "변동계수(CV%)":round(cv,1)})
+
+        if stab_rows:
+            stab_df = pd.DataFrame(stab_rows).sort_values("변동계수(CV%)")
+            n = len(stab_df)
+            cols_s = st.columns(min(n,3))
+            for i, (_, row) in enumerate(stab_df.iterrows()):
+                cv_val = row["변동계수(CV%)"]
+                ac = "green" if cv_val<10 else ("orange" if cv_val<20 else "red")
+                with cols_s[i % min(n,3)]:
+                    st.markdown(kpi_card(row["지표"], f"{cv_val:.1f}", unit="CV%", accent=ac, reverse=True),
+                                unsafe_allow_html=True)
+            card_open("운영 안정성 지수 상세", "CV% 낮을수록 안정적 운영")
+            fig_stab = px.bar(stab_df, x="변동계수(CV%)", y="지표", orientation="h",
+                              color="변동계수(CV%)",
+                              color_continuous_scale=["#d1fae5","#fef3c7","#fee2e2"])
+            fig_stab.update_layout(**base_layout(300,""))
+            fig_stab.update_traces(marker_line_width=0)
+            fig_stab.update_coloraxes(showscale=False)
+            st.plotly_chart(fig_stab, use_container_width=True)
+            download_csv_button(stab_df, "stability_index.csv")
+            card_close()
+
+    with tab4:
+        section_title("리소스 Forecasting (인입 변동성 기반 예측)")
+        st.markdown("""
+        <div class="alert-card info">
+          <span class="alert-icon">🔮</span>
+          <span>최근 2주 요일 패턴 기반 <b>7일 인입량 예측</b> 및 필요 리소스 추정입니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        def forecast_channel(df, label, aht_col):
+            if df.empty or "일자" not in df.columns: return
+            df2 = df.copy()
+            df2["일자"] = pd.to_datetime(df2["일자"], errors="coerce")
+            daily_cnt = df2.groupby("일자").size().reset_index(name="인입수")
+            if len(daily_cnt) < 7:
+                st.info(f"{label}: 예측에 필요한 데이터 7일 이상 필요"); return
+            daily_cnt["요일"] = daily_cnt["일자"].dt.dayofweek
+            recent = daily_cnt.tail(14)
+            dow_avg = recent.groupby("요일")["인입수"].mean()
+            overall_avg = recent["인입수"].mean()
+            last_date = daily_cnt["일자"].max()
+            fc_rows = []
+            for d in range(1, 8):
+                fd = last_date + timedelta(days=d)
+                dow = fd.dayofweek
+                pred = int(round(dow_avg.get(dow, overall_avg)))
+                fc_rows.append({"날짜":fd, "요일":["월","화","수","목","금","토","일"][dow],
+                                "예측 인입수":pred})
+            fc_df = pd.DataFrame(fc_rows)
+            resp_df = df[df["응대여부"]=="응대"] if "응대여부" in df.columns else df
+            if not resp_df.empty and aht_col in resp_df.columns:
+                avg_aht = float(resp_df[aht_col].mean())
+                fc_df["예측 필요인원"] = (fc_df["예측 인입수"]*avg_aht/28800).apply(lambda x: max(1,int(round(x*1.2))))
+            card_open(f"{label} 7일 예측")
+            fig_fc = go.Figure()
+            fig_fc.add_trace(go.Scatter(x=recent["일자"], y=recent["인입수"],
+                                        mode="lines+markers", name="실제",
+                                        line=dict(color=COLORS["primary"], width=2),
+                                        marker=dict(size=5)))
+            fig_fc.add_trace(go.Scatter(x=fc_df["날짜"], y=fc_df["예측 인입수"],
+                                        mode="lines+markers", name="예측",
+                                        line=dict(color=COLORS["warning"], width=2, dash="dot"),
+                                        marker=dict(size=7, symbol="diamond")))
+            fig_fc.update_layout(**base_layout(280,""))
+            st.plotly_chart(fig_fc, use_container_width=True)
+            st.dataframe(fc_df, use_container_width=True, height=240)
+            download_csv_button(fc_df, f"forecast_{label}.csv")
+            card_close()
+
+        tab_ph, tab_ch, tab_bo = st.tabs(["📞 전화","💬 채팅","📝 게시판"])
+        with tab_ph: forecast_channel(phone,"전화","AHT(초)")
+        with tab_ch: forecast_channel(chat, "채팅","리드타임(초)")
+        with tab_bo: forecast_channel(board,"게시판","리드타임(초)")
+
+
+# ══════════════════════════════════════════════
+# 사이드바 렌더링 — 아코디언 그룹 + 네모 활성 버튼
 # ══════════════════════════════════════════════
 def render_sidebar(phone_raw, chat_raw, board_raw):
     with st.sidebar:
+        # ── 로고 헤더 ──────────────────────────
         st.markdown("""
         <div style="
-            padding: 20px 16px 16px;
+            padding: 20px 16px 14px;
             border-bottom: 1px solid rgba(255,255,255,0.07);
-            margin-bottom: 14px;
+            margin-bottom: 10px;
         ">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <div style="
-                    width:28px;height:28px;
-                    background:linear-gradient(135deg,#6366f1,#8b5cf6);
-                    border-radius:8px;display:flex;align-items:center;
-                    justify-content:center;font-size:14px;flex-shrink:0;
-                ">📞</div>
-                <div style="font-size:15px;font-weight:800;color:#fff;letter-spacing:-0.03em;">CC OPS</div>
-            </div>
-            <div style="
-                font-size:10.5px;color:rgba(148,163,184,0.8);
-                font-weight:500;padding-left:36px;letter-spacing:0.01em;
-            ">Contact Center Analytics</div>
+            <div style="font-size:15px;font-weight:800;color:#fff;letter-spacing:-0.03em;
+            margin-bottom:2px;">CC OPS</div>
+            <div style="font-size:10px;color:rgba(148,163,184,0.7);
+            font-weight:500;letter-spacing:0.01em;">Contact Center Analytics</div>
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("🔄  데이터 새로고침", key="btn_refresh"):
+        if st.button("데이터 새로고침", key="btn_refresh"):
             st.cache_data.clear()
             st.rerun()
 
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-        st.markdown("""
-        <div style="font-size:10px;font-weight:800;color:rgba(148,163,184,0.6);
-        text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;margin-top:4px;">기간 단위</div>
-        """, unsafe_allow_html=True)
+        # ── 기간 단위 ──────────────────────────
+        st.markdown("""<div style="font-size:10px;font-weight:700;
+        color:rgba(148,163,184,0.55);text-transform:uppercase;
+        letter-spacing:0.07em;margin-bottom:5px;margin-top:6px;">기간 단위</div>""",
+        unsafe_allow_html=True)
         unit = st.radio("기간 단위", ["일별","주별","월별"],
                         horizontal=True, label_visibility="collapsed")
         month_range = 3
         if unit == "월별":
             month_range = st.slider("추이 범위(개월)", 1, 6, 3)
 
-        st.markdown("""
-        <div style="margin-top:14px;font-size:10px;font-weight:800;
-        color:rgba(148,163,184,0.6);text-transform:uppercase;
-        letter-spacing:0.08em;margin-bottom:8px;">날짜 빠른 선택</div>
-        """, unsafe_allow_html=True)
-
+        # ── 날짜 빠른 선택 ─────────────────────
+        st.markdown("""<div style="margin-top:12px;font-size:10px;font-weight:700;
+        color:rgba(148,163,184,0.55);text-transform:uppercase;
+        letter-spacing:0.07em;margin-bottom:6px;">날짜 빠른 선택</div>""",
+        unsafe_allow_html=True)
         today = date.today()
         c1, c2 = st.columns(2)
         with c1:
@@ -4636,27 +4975,20 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
                 st.session_state["ds"] = date(2024, 1, 1)
                 st.session_state["de"] = today
 
-        date_start = st.date_input(
-            "시작일",
-            value=st.session_state.get("ds", today - timedelta(days=29)),
-            key="date_start"
-        )
-        date_end = st.date_input(
-            "종료일",
-            value=st.session_state.get("de", today),
-            key="date_end"
-        )
+        date_start = st.date_input("시작일",
+            value=st.session_state.get("ds", today - timedelta(days=29)), key="date_start")
+        date_end   = st.date_input("종료일",
+            value=st.session_state.get("de", today), key="date_end")
 
+        # ── 필터 ───────────────────────────────
         all_ops = sorted(set(
             list(phone_raw["사업자명"].dropna().unique() if "사업자명" in phone_raw.columns else []) +
             list(chat_raw["사업자명"].dropna().unique()  if "사업자명" in chat_raw.columns  else []) +
             list(board_raw["사업자명"].dropna().unique() if "사업자명" in board_raw.columns else [])
         ))
-        st.markdown("""
-        <div style="margin-top:14px;font-size:10px;font-weight:800;
-        color:rgba(148,163,184,0.6);text-transform:uppercase;
-        letter-spacing:0.08em;margin-bottom:5px;">사업자 필터</div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div style="margin-top:12px;font-size:10px;font-weight:700;
+        color:rgba(148,163,184,0.55);text-transform:uppercase;
+        letter-spacing:0.07em;margin-bottom:4px;">사업자 필터</div>""", unsafe_allow_html=True)
         sel_ops = st.multiselect("사업자", all_ops, default=[],
                                  label_visibility="collapsed", key="sel_ops")
 
@@ -4665,62 +4997,72 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             list(chat_raw["브랜드"].dropna().unique()  if "브랜드" in chat_raw.columns  else []) +
             list(board_raw["브랜드"].dropna().unique() if "브랜드" in board_raw.columns else [])
         ))
-        st.markdown("""
-        <div style="margin-top:10px;font-size:10px;font-weight:800;
-        color:rgba(148,163,184,0.6);text-transform:uppercase;
-        letter-spacing:0.08em;margin-bottom:5px;">브랜드 필터</div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div style="margin-top:8px;font-size:10px;font-weight:700;
+        color:rgba(148,163,184,0.55);text-transform:uppercase;
+        letter-spacing:0.07em;margin-bottom:4px;">브랜드 필터</div>""", unsafe_allow_html=True)
         sel_brands = st.multiselect("브랜드", all_brands, default=[],
                                     label_visibility="collapsed", key="sel_brands")
 
-        st.markdown("""
-        <div style="margin-top:16px;padding-top:14px;
-        border-top:1px solid rgba(255,255,255,0.07);"></div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div style="margin-top:14px;padding-top:12px;
+        border-top:1px solid rgba(255,255,255,0.07);"></div>""", unsafe_allow_html=True)
 
+        # ── 아코디언 메뉴 ─────────────────────
         menu = st.session_state.get("menu", "전체 현황")
 
-        icon_map = {
-            "전체 현황":       "🏠",
-            "VOC 인입 분석":   "📋",
-            "사업자 현황":     "🏢",
-            "전화 현황":       "📞",
-            "전화 상담사":     "👤",
-            "채팅 현황":       "💬",
-            "채팅 상담사":     "👤",
-            "게시판 현황":     "📝",
-            "게시판 상담사":   "👤",
-            "상담사 종합":     "📊",
-            # 신규
-            "SLA 위반 분석":   "🚨",
-            "이상치 탐지":     "🔍",
-            "연속 미응대":     "⚡",
-            "요일×시간대 패턴":"🗓️",
-            "변동성 지수":     "📈",
-            "인력 산정":       "👥",
-            "AHT 분산분석":   "📉",
-            "학습곡선":        "📚",
-            "멀티채널 효율":   "🔄",
-            "비용 시뮬레이터": "💰",
-            "팀×채널 매트릭스":"🧩",
-        }
+        # 어느 그룹이 열려있는지 (기본: 현재 메뉴가 속한 그룹 + 대시보드)
+        def find_group(m):
+            for g, items in MENU_GROUPS.items():
+                if m in items:
+                    return g
+            return None
+
+        active_group = find_group(menu)
 
         for group, items in MENU_GROUPS.items():
-            st.markdown(f"""
-            <div style="margin:12px 0 5px 4px;font-size:10px;font-weight:800;
-            color:rgba(148,163,184,0.5);text-transform:uppercase;letter-spacing:0.08em;">
-            {group}</div>
-            """, unsafe_allow_html=True)
-            for item in items:
-                is_active = (menu == item)
-                wrap_cls  = "sidebar-active" if is_active else ""
-                icon      = icon_map.get(item, "•")
-                label     = f"{icon}  {item}"
-                st.markdown(f"<div class='{wrap_cls}'>", unsafe_allow_html=True)
-                if st.button(label, key=f"m_{item}"):
-                    st.session_state["menu"] = item
-                    st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
+            # 이 그룹이 열려야 하는지
+            grp_key = f"grp_open_{group}"
+            # 초기값: 현재 메뉴가 속한 그룹은 열림
+            if grp_key not in st.session_state:
+                st.session_state[grp_key] = (group == active_group)
+
+            is_open = st.session_state[grp_key]
+            chevron = "▾" if is_open else "▸"
+            open_cls = "open" if is_open else ""
+
+            # 그룹 헤더 (클릭으로 토글)
+            st.markdown(
+                f"""<div class="sidebar-group-header {open_cls}"
+                    style="display:flex;align-items:center;justify-content:space-between;
+                    padding:7px 8px;margin:3px 0;border-radius:6px;cursor:default;
+                    font-size:10.5px;font-weight:700;letter-spacing:0.04em;
+                    color:{'#c7d2fe' if is_open else 'rgba(148,163,184,0.6)'};
+                    text-transform:uppercase;">
+                    <span>{group}</span><span style="font-size:11px;">{chevron}</span>
+                </div>""",
+                unsafe_allow_html=True
+            )
+            if st.button(f"{'▾' if is_open else '▸'} {group}",
+                          key=f"grp_btn_{group}",
+                          help=f"{group} 메뉴 {'접기' if is_open else '펼치기'}"):
+                st.session_state[grp_key] = not is_open
+                st.rerun()
+
+            if is_open:
+                for item in items:
+                    is_active = (menu == item)
+                    wrap_cls  = "sidebar-active" if is_active else ""
+                    st.markdown(f"""<div class='{wrap_cls}' style='margin-left:8px;'>""",
+                                unsafe_allow_html=True)
+                    if st.button(item, key=f"m_{item}"):
+                        st.session_state["menu"] = item
+                        # 이 아이템의 그룹 열기
+                        for g, its in MENU_GROUPS.items():
+                            if item in its:
+                                st.session_state[f"grp_open_{g}"] = True
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
         st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
 
@@ -4818,6 +5160,8 @@ def main():
         page_cost_simulator(phone_f, chat_f, board_f)
     elif menu == "팀×채널 매트릭스":
         page_team_channel_matrix(phone_f, chat_f, board_f)
+    elif menu == "운영 구조 분석":
+        page_ops_structure(phone_f, chat_f, board_f)
 
 
 if __name__ == "__main__":
