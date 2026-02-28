@@ -2255,19 +2255,15 @@ def page_sla_breach(phone, chat, board, unit):
     bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
 
     # ── 4. KPI 계산 ──────────────────────────────────
-    if not bo_resp.empty:
-        bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
-        bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
-        bo_breach_n     = bo_breach_in_n + bo_breach_off_n
-        bo_breach_r     = bo_breach_n / len(bo_resp) * 100
-    else:
-        bo_breach_n = 0
-        bo_breach_r = 0.0
-    ch_resp = chat[chat["응대여부"]=="응대"] if not chat.empty else pd.DataFrame()
+    # 전화: 사용자 설정 SLA 기준
+    ph_breach_n = int((ph_resp["대기시간(초)"] > _sla_phone).sum()) if (not ph_resp.empty and _sla_phone) else 0
+    ph_breach_r = ph_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
+
+    # 채팅: 응답시간 기준
     ch_breach_n = int((ch_resp["응답시간(초)"] > _sla_chat).sum()) if not ch_resp.empty else 0
     ch_breach_r = ch_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
 
-    bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
+    # 게시판: 근무내/근무외 기준
     if not bo_resp.empty:
         bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
         bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
@@ -2276,28 +2272,6 @@ def page_sla_breach(phone, chat, board, unit):
     else:
         bo_breach_n = 0
         bo_breach_r = 0.0
-
-    # ── KPI 계산 ────────────────────────────────
-    # 전화: 대기시간 > 20초
-    ph_resp = phone[phone["응대여부"]=="응대"] if not phone.empty else pd.DataFrame()
-    ph_breach_n = int((ph_resp["대기시간(초)"] > SLA_PHONE_WAIT).sum()) if not ph_resp.empty else 0
-    ph_breach_r = ph_breach_n / len(ph_resp) * 100 if len(ph_resp) > 0 else 0.0
-
-    # 채팅: 응답시간 > 60초
-    ch_resp = chat[chat["응대여부"]=="응대"] if not chat.empty else pd.DataFrame()
-    ch_breach_n = int((ch_resp["응답시간(초)"] > SLA_CHAT_WAIT).sum()) if not ch_resp.empty else 0
-    ch_breach_r = ch_breach_n / len(ch_resp) * 100 if len(ch_resp) > 0 else 0.0
-
-    # 게시판: 전체 LT > 24h
-    bo_resp = board[board["응대여부"]=="응대"] if not board.empty else pd.DataFrame()
-if not bo_resp.empty:
-    bo_breach_in_n  = int((bo_resp["근무내리드타임(초)"] > _sla_board_in).sum())
-    bo_breach_off_n = int((bo_resp["근무외리드타임(초)"] > _sla_board_off).sum())
-    bo_breach_n = bo_breach_in_n + bo_breach_off_n
-    bo_breach_r = bo_breach_n / len(bo_resp) * 100
-else:
-    bo_breach_n = 0
-    bo_breach_r = 0.0
 
     # ── KPI 카드 ─────────────────────────────────
     c1,c2,c3,c4,c5,c6 = st.columns(6)
