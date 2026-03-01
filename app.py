@@ -5531,8 +5531,11 @@ def _build_forecast_features(df, time_col, label):
     daily = tmp.groupby("일자").size().reset_index(name="인입수")
     daily["일자"] = pd.to_datetime(daily["일자"])
     daily = daily.sort_values("일자").reset_index(drop=True)
-    if len(daily) < 14:
-        return pd.DataFrame(), None
+    # 날짜 연속성 확보: 주말/공휴일처럼 인입이 없는 날짜는 0으로 채움
+    if len(daily) >= 2:
+        full_idx = pd.date_range(daily["일자"].min(), daily["일자"].max(), freq="D")
+        daily = daily.set_index("일자").reindex(full_idx).rename_axis("일자").reset_index()
+        daily["인입수"] = daily["인입수"].fillna(0)
 
     # 날짜 피처
     daily["요일"]       = daily["일자"].dt.dayofweek
@@ -6185,7 +6188,7 @@ def page_agent_cluster(phone, chat, board):
     agent_stats = {}
 
     if not phone.empty and "상담사명" in phone.columns:
-        ph_all = phone[~phone["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+        ph_all = phone[~phone["상담사명"].isin(EXCLUDE_AGENTS) & (phone["상담사명"] != "미응대")].copy()
         for ag, grp in ph_all.groupby("상담사명"):
             resp = grp[grp["응대여부"] == "응대"]
             if ag not in agent_stats:
@@ -6195,7 +6198,7 @@ def page_agent_cluster(phone, chat, board):
             agent_stats[ag]["전화AHT"]     = float(resp["AHT(초)"].mean()) if not resp.empty and "AHT(초)" in resp.columns else 0
 
     if not chat.empty and "상담사명" in chat.columns:
-        ch_all = chat[~chat["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+        ch_all = chat[~chat["상담사명"].isin(EXCLUDE_AGENTS) & (chat["상담사명"] != "미응대")].copy()
         for ag, grp in ch_all.groupby("상담사명"):
             resp = grp[grp["응대여부"] == "응대"]
             if ag not in agent_stats:
@@ -6245,16 +6248,32 @@ def page_agent_cluster(phone, chat, board):
     cluster_labels_map = {}
     for cl_id in range(n_clusters):
         row = cluster_means.loc[cl_id]
+        # 각 지표를 전체 클러스터 평균 대비 점수로 평가
+        resp_avg = cluster_means[["전화응대율"] if "전화응대율" in cluster_feats else cluster_feats[:1]].values.mean()
+        vol_avg  = cluster_means[["전화건수"] if "전화건수" in cluster_feats else cluster_feats[:1]].values.mean()
+        aht_avg  = cluster_means[["전화AHT"] if "전화AHT" in cluster_feats else cluster_feats[:1]].values.mean()
+
         resp_score = row.get("전화응대율", 0) + row.get("채팅응대율", 0)
-        vol_score  = row.get("전화건수", 0) + row.get("채팅건수", 0)
+        vol_score  = row.get("전화건수", 0)   + row.get("채팅건수", 0)
         aht_score  = row.get("전화AHT", 0)
-        if resp_score > cluster_means[["전화응대율"] if "전화응대율" in cluster_feats else cluster_feats[:1]].values.mean() * 1.2:
-            if vol_score > cluster_means[["전화건수"] if "전화건수" in cluster_feats else cluster_feats[:1]].values.mean():
-                lbl = f"C{cl_id+1}: 고성과 핵심"
-            else:
-                lbl = f"C{cl_id+1}: 안정형"
-        elif aht_score > cluster_means[["전화AHT"] if "전화AHT" in cluster_feats else cluster_feats[:1]].values.mean() * 1.2 if "전화AHT" in cluster_feats else True:
+
+        resp_high = resp_score > (row.get("전화응대율", 0) / max(resp_score, 1)) * resp_avg * 1.05 if resp_score > 0 else False
+        vol_high  = vol_score > vol_avg
+        aht_high  = aht_score > aht_avg * 1.1 if aht_avg > 0 else False
+
+        # 클러스터 내 응대율 절대값 기준으로 판단
+        abs_resp = (row.get("전화응대율", 0) + row.get("채팅응대율", 0)) / max(
+            (1 if "전화응대율" in cluster_feats else 0) + (1 if "채팅응대율" in cluster_feats else 0), 1
+        )
+
+        if abs_resp >= 85 and vol_high:
+            lbl = f"C{cl_id+1}: 고성과 핵심"
+        elif abs_resp >= 80 and not vol_high:
+            lbl = f"C{cl_id+1}: 안정형 (고응대·저량)"
+        elif aht_high and abs_resp < 80:
             lbl = f"C{cl_id+1}: 장시간형 (육성 필요)"
+        elif abs_resp < 70:
+            lbl = f"C{cl_id+1}: 미응대 多 (집중 관리)"
         else:
             lbl = f"C{cl_id+1}: 신규/성장형"
         cluster_labels_map[cl_id] = lbl
