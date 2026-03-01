@@ -155,6 +155,24 @@ section[data-testid="stSidebar"] .stButton > button {
     transition: all 130ms cubic-bezier(0.4, 0, 0.2, 1) !important;
     letter-spacing: -0.005em !important;
 }
+/* 날짜 빠른선택 버튼 — 작고 중앙정렬 */
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button {
+    text-align: center !important;
+    padding: 0 4px !important;
+    height: 26px !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    color: #cbd5e1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button:hover {
+    background: rgba(99,102,241,0.15) !important;
+    border-color: rgba(99,102,241,0.3) !important;
+    color: #fff !important;
+}
 section[data-testid="stSidebar"] .stButton > button:hover {
     background: rgba(99,102,241,0.1) !important;
     border-color: rgba(99,102,241,0.2) !important;
@@ -5177,72 +5195,76 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
         if "de" not in st.session_state:
             st.session_state["de"] = today
 
-        # 빠른 선택 버튼 (2x3 그리드)
-        _q_cols = st.columns(3)
-        _quick = [("7일", today-timedelta(days=6), today),
-                  ("30일", today-timedelta(days=29), today),
-                  ("이번달", today.replace(day=1), today),
-                  ("지난달", (today.replace(day=1)-timedelta(days=1)).replace(day=1),
-                             today.replace(day=1)-timedelta(days=1)),
-                  ("90일", today-timedelta(days=89), today),
-                  ("전체", date(2024,1,1), today)]
-        for i, (label, ds_, de_) in enumerate(_quick):
-            with _q_cols[i % 3]:
-                if st.button(label, key=f"quick_{label}", use_container_width=True):
-                    st.session_state["ds"] = ds_
-                    st.session_state["de"] = de_
+        # ── 빠른 선택 버튼 (2열, 한글 짧게) ──────
+        # 버튼 클릭 플래그로 session_state 경쟁 방지
+        _last_month_first = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+        _last_month_end   = today.replace(day=1) - timedelta(days=1)
+        _quick = [
+            ("7일",   today-timedelta(days=6),  today),
+            ("30일",  today-timedelta(days=29), today),
+            ("이번달", today.replace(day=1),    today),
+            ("지난달", _last_month_first,        _last_month_end),
+            ("90일",  today-timedelta(days=89), today),
+            ("전체",  date(2024,1,1),            today),
+        ]
+        _qa, _qb = st.columns(2)
+        for i, (ql, qds, qde) in enumerate(_quick):
+            _col = _qa if i % 2 == 0 else _qb
+            with _col:
+                if st.button(ql, key=f"qbtn_{ql}", use_container_width=True):
+                    st.session_state["ds"] = qds
+                    st.session_state["de"] = qde
+                    st.session_state["_date_updated"] = True
                     st.rerun()
 
-        # 달력 선택 모드 토글
+        st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
+
+        # ── 선택 방식 (기간 / 단일) ────────────
         _cal_mode = st.session_state.get("cal_mode", "range")
-        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.5);margin:5px 0 2px;
-        display:flex;gap:6px;align-items:center;">
-        <span>선택 방식</span></div>""", unsafe_allow_html=True)
-        _m_cols = st.columns(2)
-        with _m_cols[0]:
-            if st.button("📅 기간", key="mode_range",
-                         help="시작~종료 날짜 범위 선택",
-                         use_container_width=True):
+        _ma, _mb = st.columns(2)
+        with _ma:
+            _range_style = "background:rgba(99,102,241,0.25)!important;color:#c7d2fe!important;" if _cal_mode=="range" else ""
+            st.markdown(f'<div style="{_range_style}">', unsafe_allow_html=True)
+            if st.button("📅 기간", key="mode_range", use_container_width=True):
                 st.session_state["cal_mode"] = "range"
                 st.rerun()
-        with _m_cols[1]:
-            if st.button("📆 단일", key="mode_single",
-                         help="특정 하루만 선택",
-                         use_container_width=True):
+            st.markdown("</div>", unsafe_allow_html=True)
+        with _mb:
+            _single_style = "background:rgba(99,102,241,0.25)!important;color:#c7d2fe!important;" if _cal_mode=="single" else ""
+            st.markdown(f'<div style="{_single_style}">', unsafe_allow_html=True)
+            if st.button("📆 단일", key="mode_single", use_container_width=True):
                 st.session_state["cal_mode"] = "single"
                 st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        _cal_mode = st.session_state.get("cal_mode", "range")
+        # 날짜 입력 — value는 항상 session_state 기준
+        _ds_val = st.session_state.get("ds", today - timedelta(days=29))
+        _de_val = st.session_state.get("de", today)
 
         if _cal_mode == "single":
-            # 단일 날짜 달력 선택
-            st.markdown("""<div style="font-size:9px;color:rgba(99,102,241,0.9);
-            font-weight:600;margin:3px 0;">📆 단일 날짜 선택</div>""", unsafe_allow_html=True)
             _single_date = st.date_input(
                 "날짜",
-                value=st.session_state.get("ds", today),
+                value=_ds_val,
                 label_visibility="collapsed",
                 key="cal_single"
             )
             date_start = _single_date
             date_end   = _single_date
-            st.session_state["ds"] = date_start
-            st.session_state["de"] = date_end
         else:
-            # 기간 선택 (시작~종료)
-            st.markdown("""<div style="font-size:9px;color:rgba(99,102,241,0.9);
-            font-weight:600;margin:3px 0;">📅 기간 선택</div>""", unsafe_allow_html=True)
             date_start = st.date_input(
                 "시작일",
-                value=st.session_state.get("ds", today - timedelta(days=29)),
+                value=_ds_val,
                 key="date_start"
             )
             date_end = st.date_input(
                 "종료일",
-                value=st.session_state.get("de", today),
+                value=_de_val,
                 key="date_end"
             )
-            # date_input 변경 시 session_state 동기화
+
+        # 수동으로 날짜를 바꿨을 때만 session_state 업데이트
+        # (버튼으로 rerun된 경우엔 이미 session_state가 최신)
+        if not st.session_state.pop("_date_updated", False):
             st.session_state["ds"] = date_start
             st.session_state["de"] = date_end
 
