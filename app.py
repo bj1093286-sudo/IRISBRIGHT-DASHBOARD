@@ -92,12 +92,20 @@ section[data-testid="stSidebar"] {
     left: 0 !important;
 }
 section[data-testid="stSidebar"] > div:first-child { padding-top: 0 !important; }
-section[data-testid="stSidebar"] .stRadio { margin-bottom: 0 !important; }
-section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
-section[data-testid="stSidebar"] .stSlider { padding-top: 0 !important; margin-bottom: 2px !important; }
-section[data-testid="stSidebar"] .stDateInput { margin-bottom: 2px !important; }
-section[data-testid="stSidebar"] .stMultiSelect { margin-bottom: 2px !important; }
-section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 2px !important; }
+/* 라디오 — 가로 배치 여유 확보 */
+section[data-testid="stSidebar"] .stRadio { margin-bottom: 4px !important; }
+section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] { display:flex !important; flex-wrap:wrap !important; gap:4px 10px !important; }
+section[data-testid="stSidebar"] .stRadio label { font-size:12px !important; font-weight:500 !important; color:#cbd5e1 !important; white-space:nowrap !important; }
+/* 슬라이더 */
+section[data-testid="stSidebar"] .stSlider { padding-top:0 !important; margin-bottom:4px !important; }
+/* 날짜 라벨 */
+section[data-testid="stSidebar"] .stDateInput label { font-size:10px !important; color:rgba(148,163,184,0.6) !important; }
+section[data-testid="stSidebar"] .stDateInput { margin-bottom:4px !important; }
+/* multiselect 라벨 표시 */
+section[data-testid="stSidebar"] .stMultiSelect { margin-bottom:4px !important; }
+section[data-testid="stSidebar"] .stMultiSelect label { font-size:10px !important; font-weight:600 !important; color:rgba(148,163,184,0.55) !important; text-transform:uppercase !important; letter-spacing:0.05em !important; display:block !important; visibility:visible !important; height:auto !important; overflow:visible !important; margin-bottom:2px !important; }
+/* 전체 수직 간격 */
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap:0px !important; }
 section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
 section[data-testid="stSidebar"] > div { display: block !important; visibility: visible !important; width: 240px !important; }
 [data-testid="collapsedControl"] {
@@ -5268,31 +5276,27 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             st.session_state["ds"] = date_start
             st.session_state["de"] = date_end
 
-        # ── 필터 ───────────────────────────────
-        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
-        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 3px;">필터</div>""",
-        unsafe_allow_html=True)
+        st.markdown("""<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.07);
+        font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);text-transform:uppercase;
+        letter-spacing:0.07em;margin-bottom:6px;">필터</div>""", unsafe_allow_html=True)
 
         all_ops = sorted(set(
             list(phone_raw["사업자명"].dropna().unique() if "사업자명" in phone_raw.columns else []) +
             list(chat_raw["사업자명"].dropna().unique()  if "사업자명" in chat_raw.columns  else []) +
             list(board_raw["사업자명"].dropna().unique() if "사업자명" in board_raw.columns else [])
         ))
-        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.45);margin-bottom:2px;">사업자</div>""", unsafe_allow_html=True)
         sel_ops = st.multiselect("사업자", all_ops, default=[],
-                                 label_visibility="collapsed", key="sel_ops")
+                                 placeholder="전체 (선택 없음)",
+                                 label_visibility="visible", key="sel_ops")
 
         all_brands = sorted(set(
             list(phone_raw["브랜드"].dropna().unique() if "브랜드" in phone_raw.columns else []) +
             list(chat_raw["브랜드"].dropna().unique()  if "브랜드" in chat_raw.columns  else []) +
             list(board_raw["브랜드"].dropna().unique() if "브랜드" in board_raw.columns else [])
         ))
-        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.45);margin-bottom:2px;margin-top:3px;">브랜드</div>""", unsafe_allow_html=True)
         sel_brands = st.multiselect("브랜드", all_brands, default=[],
-                                    label_visibility="collapsed", key="sel_brands")
-
-        st.markdown("""<div style="margin-top:8px;padding-top:8px;
-        border-top:1px solid rgba(255,255,255,0.07);"></div>""", unsafe_allow_html=True)
+                                    placeholder="전체 (선택 없음)",
+                                    label_visibility="visible", key="sel_brands")
 
         # ── 아코디언 메뉴 ─────────────────────
         menu = st.session_state.get("menu", "전체 현황")
