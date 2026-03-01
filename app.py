@@ -1339,14 +1339,41 @@ def page_overview(phone, chat, board, unit, month_range, start, end,
                         "문의유형별 ATT/ACW (전화)", "전화 응대 기준 상위 15개 유형")
 
     with tab_ch_aht:
-        # 채팅은 SLA = 대기시간(응답시간) + ACW
-        ch_aht = _aht_by_type(
-            chat.copy() if not chat.empty else pd.DataFrame(),
-            "응답시간(초)", "ACW시간(초)", "대기시간(SLA)", "ACW(후처리)", _type_cols
-        )
-        _render_aht_tab(ch_aht, "대기시간(SLA)", "ACW(후처리)",
-                        COLORS["chat"], COLORS["warning"],
-                        "문의유형별 대기/ACW (채팅)", "채팅 SLA = 대기시간 기준 | 상위 15개 유형")
+        # 채팅은 SLA = 대기시간(응답시간)만
+        _chat = chat.copy() if not chat.empty else pd.DataFrame()
+        _type_col_ch = next((c for c in _type_cols if c in _chat.columns), None)
+        if _chat.empty or _type_col_ch is None:
+            st.info("채팅 데이터 또는 문의유형 컬럼이 없습니다.")
+        else:
+            _ch_resp = _chat[_chat["응대여부"]=="응대"].copy() if "응대여부" in _chat.columns else _chat.copy()
+            if "응답시간(초)" not in _ch_resp.columns: _ch_resp["응답시간(초)"] = 0.0
+            _ch_resp = ensure_seconds_col(_ch_resp, "응답시간(초)")
+            _g_ch = _ch_resp.groupby(_type_col_ch).agg(
+                건수=(_type_col_ch,"count"),
+                대기시간=("응답시간(초)","mean"),
+            ).reset_index()
+            _g_ch = _g_ch.sort_values("건수",ascending=False).head(15)
+            _g_ch.rename(columns={_type_col_ch:"유형"},inplace=True)
+            card_open("문의유형별 대기시간 (채팅)", f"채팅 SLA 기준: {SLA_CHAT_WAIT}초 이내 응답")
+            _fig_ch = go.Figure(go.Bar(
+                x=_g_ch["유형"], y=_g_ch["대기시간"],
+                marker_color=COLORS["chat"], marker_line_width=0,
+                hovertemplate="<b>%{x}</b><br>평균 대기: %{customdata}<extra></extra>",
+                customdata=[fmt_hms(v) for v in _g_ch["대기시간"]]
+            ))
+            # SLA 기준선
+            _fig_ch.add_hline(y=SLA_CHAT_WAIT, line_dash="dash",
+                line_color=COLORS["danger"], line_width=1.5,
+                annotation_text=f"SLA {SLA_CHAT_WAIT}초", annotation_position="top right",
+                annotation_font=dict(size=10, color=COLORS["danger"]))
+            _lo_ch = base_layout(300,""); _lo_ch["yaxis"]["title"]="초(sec)"
+            _fig_ch.update_layout(**_lo_ch)
+            st.plotly_chart(_fig_ch, use_container_width=True)
+            _disp_ch = _g_ch.copy()
+            _disp_ch["대기시간"] = _disp_ch["대기시간"].apply(fmt_hms)
+            _disp_ch["건수"] = _disp_ch["건수"].apply(fmt_num)
+            st.dataframe(_disp_ch[["유형","건수","대기시간"]], use_container_width=True, height=220)
+            card_close()
 
     with tab_bo_aht:
         # 게시판은 근무내 LT / 근무외 LT
@@ -5217,19 +5244,11 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             st.rerun()
 
         # ── 기간 단위 ──────────────────────────
-        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
-        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 3px;">기간 단위</div>""",
-        unsafe_allow_html=True)
         unit = st.radio("기간 단위", ["일별","주별","월별"],
                         horizontal=True, label_visibility="collapsed")
         month_range = 3
         if unit == "월별":
             month_range = st.slider("추이 범위(개월)", 1, 6, 3)
-
-        # ── 날짜 선택 ─────────────────────────
-        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
-        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 4px;">날짜 선택</div>""",
-        unsafe_allow_html=True)
 
         today = date.today()
 
@@ -5312,9 +5331,7 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             st.session_state["ds"] = date_start
             st.session_state["de"] = date_end
 
-        st.markdown("""<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.07);
-        font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);text-transform:uppercase;
-        letter-spacing:0.07em;margin-bottom:6px;">필터</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.07);"></div>""", unsafe_allow_html=True)
 
         all_ops = sorted(set(
             list(phone_raw["사업자명"].dropna().unique() if "사업자명" in phone_raw.columns else []) +
