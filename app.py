@@ -7,6 +7,23 @@ from datetime import datetime, timedelta, date, time
 import holidays
 import math
 import io
+import warnings
+warnings.filterwarnings("ignore")
+
+# ── scikit-learn imports ──────────────────────
+try:
+    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+    from sklearn.linear_model import Ridge, LinearRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+    from sklearn.inspection import permutation_importance
+    SKLEARN_OK = True
+except ImportError:
+    SKLEARN_OK = False
 
 # ══════════════════════════════════════════════
 # 설정
@@ -40,7 +57,8 @@ MENU_GROUPS = {
         "상담사 종합",
     ],
     "운영 품질":   ["SLA 위반 분석", "이상치 탐지", "연속 미응대"],
-    "예측·계획":   ["요일×시간대 패턴", "변동성 지수", "인력 산정"],
+    "예측·계획":   ["요일×시간대 패턴", "변동성 지수", "인력 산정",
+                    "ML 인입량 예측", "운영성 예측 모델", "상담사 역량 클러스터"],
     "상담사 역량": ["AHT 분산분석", "학습곡선", "멀티채널 효율"],
     "운영 구조":   ["비용 시뮬레이터", "팀×채널 매트릭스", "운영 구조 분석"],
 }
@@ -5491,6 +5509,866 @@ def main():
         page_team_channel_matrix(phone_f, chat_f, board_f)
     elif menu == "운영 구조 분석":
         page_ops_structure(phone_f, chat_f, board_f)
+    elif menu == "ML 인입량 예측":
+        page_ml_forecast(phone_f, chat_f, board_f)
+    elif menu == "운영성 예측 모델":
+        page_ml_ops_predict(phone_f, chat_f, board_f)
+    elif menu == "상담사 역량 클러스터":
+        page_agent_cluster(phone_f, chat_f, board_f)
+
+
+# ══════════════════════════════════════════════
+# ★ ML-1: 인입량 예측 (ML Forecast)
+# ══════════════════════════════════════════════
+def _build_forecast_features(df, time_col, label):
+    """시계열 피처 엔지니어링: 날짜 기반 + 래그 피처"""
+    if df.empty or time_col not in df.columns:
+        return pd.DataFrame(), None
+    tmp = df.copy()
+    tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
+    tmp = tmp[tmp["_dt"].notna()]
+    tmp["일자"] = tmp["_dt"].dt.date
+    daily = tmp.groupby("일자").size().reset_index(name="인입수")
+    daily["일자"] = pd.to_datetime(daily["일자"])
+    daily = daily.sort_values("일자").reset_index(drop=True)
+    if len(daily) < 14:
+        return pd.DataFrame(), None
+
+    # 날짜 피처
+    daily["요일"]       = daily["일자"].dt.dayofweek
+    daily["월"]         = daily["일자"].dt.month
+    daily["주차"]       = daily["일자"].dt.isocalendar().week.astype(int)
+    daily["공휴일여부"] = daily["일자"].apply(
+        lambda d: int(d.date() in KR_HOLIDAYS) if hasattr(d, 'date') else 0
+    )
+    daily["주말여부"]   = (daily["요일"] >= 5).astype(int)
+    # 롤링 통계 피처
+    daily["lag1"]  = daily["인입수"].shift(1)
+    daily["lag7"]  = daily["인입수"].shift(7)
+    daily["lag14"] = daily["인입수"].shift(14)
+    daily["roll7_mean"] = daily["인입수"].shift(1).rolling(7).mean()
+    daily["roll7_std"]  = daily["인입수"].shift(1).rolling(7).std()
+    daily["roll14_mean"]= daily["인입수"].shift(1).rolling(14).mean()
+    daily = daily.dropna().reset_index(drop=True)
+    return daily, label
+
+
+def _train_and_evaluate(X_train, y_train, X_test, y_test, model_name):
+    """모델 학습 + 평가 결과 반환"""
+    models = {
+        "Random Forest":   RandomForestRegressor(n_estimators=200, max_depth=6, random_state=42, n_jobs=-1),
+        "Gradient Boosting": GradientBoostingRegressor(n_estimators=200, max_depth=4, learning_rate=0.05, random_state=42),
+        "Ridge":           Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=1.0))]),
+    }
+    if model_name not in models:
+        model_name = "Random Forest"
+    model = models[model_name]
+    model.fit(X_train, y_train)
+    pred = model.predict(X_test)
+    pred = np.maximum(pred, 0)
+    mae  = mean_absolute_error(y_test, pred)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    r2   = r2_score(y_test, pred)
+    mape = np.mean(np.abs((y_test - pred) / np.maximum(y_test, 1))) * 100
+    return model, pred, {"MAE": mae, "RMSE": rmse, "R²": r2, "MAPE(%)": mape}
+
+
+def page_ml_forecast(phone, chat, board):
+    if not SKLEARN_OK:
+        st.error("scikit-learn이 설치되지 않았습니다. `pip install scikit-learn`을 실행하세요.")
+        return
+
+    st.markdown("""
+    <div class="dash-header">
+      <div class="dash-header-left">
+        <h1>🤖 ML 인입량 예측</h1>
+        <span>머신러닝 기반 일별 인입량 예측 및 미래 수요 시뮬레이션</span>
+      </div>
+      <span class="dash-badge primary">scikit-learn</span>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="alert-card info">
+      <span class="alert-icon">🧠</span>
+      <span><b>모델 설명:</b> 날짜 피처(요일·월·공휴일)와 래그 피처(전일·7일전·14일전·롤링평균)를 사용하여
+      Random Forest / Gradient Boosting / Ridge 중 선택된 모델로 일별 인입량을 예측합니다.
+      <b>시계열 분할(TimeSeriesSplit)</b>로 미래 누출 없이 평가합니다.</span>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 채널 & 모델 선택 ──────────────────────────
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        ch_sel = st.selectbox("채널 선택", ["전화", "채팅", "게시판"], key="mlf_ch")
+    with c2:
+        model_sel = st.selectbox("모델 선택", ["Random Forest", "Gradient Boosting", "Ridge"], key="mlf_model")
+    with c3:
+        forecast_days = st.slider("예측 일수(미래)", 7, 90, 30, 7, key="mlf_days")
+
+    df_map    = {"전화": (phone, "인입시각"), "채팅": (chat, "접수일시"), "게시판": (board, "접수일시")}
+    df_src, tcol = df_map[ch_sel]
+
+    daily, label = _build_forecast_features(df_src, tcol, ch_sel)
+
+    if daily.empty:
+        st.warning(f"{ch_sel} 채널의 일별 데이터가 충분하지 않습니다. 최소 14일 이상 데이터가 필요합니다.")
+        return
+
+    FEATURE_COLS = ["요일", "월", "주차", "공휴일여부", "주말여부",
+                    "lag1", "lag7", "lag14", "roll7_mean", "roll7_std", "roll14_mean"]
+    X = daily[FEATURE_COLS].values
+    y = daily["인입수"].values
+
+    # 시계열 분할: 마지막 20%를 테스트셋
+    split_idx = int(len(daily) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+    dates_test = daily["일자"].iloc[split_idx:]
+
+    if len(X_train) < 5:
+        st.warning("학습 데이터가 부족합니다. 더 넓은 날짜 범위를 선택하세요.")
+        return
+
+    model, pred_test, metrics = _train_and_evaluate(X_train, y_train, X_test, y_test, model_sel)
+
+    # ── KPI: 모델 성능 ───────────────────────────
+    section_title("📊 모델 성능 지표 (테스트셋)")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.markdown(kpi_card("MAE", f"{metrics['MAE']:.1f}", unit="건", accent="blue"), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("RMSE", f"{metrics['RMSE']:.1f}", unit="건", accent="orange"), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("R²", f"{metrics['R²']:.3f}", accent="green" if metrics['R²'] > 0.7 else "orange"), unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("MAPE", f"{metrics['MAPE(%)']:.1f}", unit="%", accent="green" if metrics['MAPE(%)'] < 15 else "red"), unsafe_allow_html=True)
+
+    acc_label = "우수" if metrics['R²'] > 0.8 else ("양호" if metrics['R²'] > 0.6 else "개선필요")
+    acc_cls   = "success" if metrics['R²'] > 0.8 else ("warning" if metrics['R²'] > 0.6 else "danger")
+    st.markdown(f"""
+    <div class="alert-card {acc_cls}">
+      <span class="alert-icon">{'✅' if metrics['R²'] > 0.8 else ('⚠️' if metrics['R²'] > 0.6 else '❌')}</span>
+      <span>모델 정확도 판정: <b>{acc_label}</b> — R²={metrics['R²']:.3f}, MAPE={metrics['MAPE(%)']:.1f}%
+      (R²>0.8=우수, >0.6=양호, 이하=개선필요)</span>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 실제 vs 예측 차트 ───────────────────────
+    section_title("📈 실제 vs 예측 비교 (테스트 구간)")
+    card_open("실제 인입량 vs 모델 예측")
+    fig_pred = go.Figure()
+    fig_pred.add_trace(go.Scatter(
+        x=daily["일자"].iloc[:split_idx], y=y_train,
+        name="학습 데이터", line=dict(color=COLORS["neutral"], width=1.5),
+        hovertemplate="<b>%{x|%Y-%m-%d}</b><br>실제: %{y:,}건<extra>학습</extra>"
+    ))
+    fig_pred.add_trace(go.Scatter(
+        x=dates_test, y=y_test,
+        name="실제 (테스트)", line=dict(color=COLORS["primary"], width=2.5),
+        hovertemplate="<b>%{x|%Y-%m-%d}</b><br>실제: %{y:,}건<extra>테스트</extra>"
+    ))
+    fig_pred.add_trace(go.Scatter(
+        x=dates_test, y=pred_test,
+        name="예측", line=dict(color=COLORS["danger"], width=2.5, dash="dot"),
+        hovertemplate="<b>%{x|%Y-%m-%d}</b><br>예측: %{y:,.0f}건<extra>예측</extra>"
+    ))
+    fig_pred.add_vrect(
+        x0=daily["일자"].iloc[split_idx], x1=daily["일자"].iloc[-1],
+        fillcolor="rgba(99,102,241,0.04)", line_width=0,
+        annotation_text="테스트 구간", annotation_position="top left",
+        annotation_font=dict(size=10, color=COLORS["primary"])
+    )
+    lo = base_layout(360, "")
+    lo["legend"] = dict(orientation="h", y=1.08, x=0, font=dict(size=11))
+    fig_pred.update_layout(**lo)
+    st.plotly_chart(fig_pred, use_container_width=True)
+    card_close()
+
+    # ── 미래 예측 ────────────────────────────────
+    section_title(f"🔮 향후 {forecast_days}일 인입량 예측")
+
+    last_row  = daily.iloc[-1]
+    last_date = pd.Timestamp(last_row["일자"])
+    history_vals = daily["인입수"].values.tolist()
+
+    future_rows = []
+    for i in range(1, forecast_days + 1):
+        fdate = last_date + timedelta(days=i)
+        lag1  = history_vals[-1]
+        lag7  = history_vals[-7]  if len(history_vals) >= 7  else history_vals[0]
+        lag14 = history_vals[-14] if len(history_vals) >= 14 else history_vals[0]
+        r7m   = np.mean(history_vals[-7:])
+        r7s   = np.std(history_vals[-7:])
+        r14m  = np.mean(history_vals[-14:]) if len(history_vals) >= 14 else r7m
+        is_hol = int(fdate.date() in KR_HOLIDAYS)
+        feat = np.array([[fdate.dayofweek, fdate.month, fdate.isocalendar()[1],
+                          is_hol, int(fdate.dayofweek >= 5),
+                          lag1, lag7, lag14, r7m, r7s, r14m]])
+        pred_val = max(0, float(model.predict(feat)[0]))
+        future_rows.append({"일자": fdate, "예측인입수": round(pred_val), "공휴일": "🔴" if is_hol else ""})
+        history_vals.append(pred_val)
+
+    future_df = pd.DataFrame(future_rows)
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        card_open(f"{ch_sel} 미래 {forecast_days}일 예측", f"모델: {model_sel}")
+        fig_fut = go.Figure()
+        # 과거 30일
+        recent = daily.tail(30)
+        fig_fut.add_trace(go.Scatter(
+            x=recent["일자"], y=recent["인입수"],
+            name="실제 (최근 30일)", line=dict(color=COLORS["primary"], width=2),
+            hovertemplate="<b>%{x|%Y-%m-%d}</b><br>실제: %{y:,}건<extra></extra>"
+        ))
+        fig_fut.add_trace(go.Scatter(
+            x=future_df["일자"], y=future_df["예측인입수"],
+            name="예측", line=dict(color=COLORS["danger"], width=2.5, dash="dash"),
+            fill="tozeroy", fillcolor=hex_rgba(COLORS["danger"], 0.05),
+            hovertemplate="<b>%{x|%Y-%m-%d}</b><br>예측: %{y:,}건<extra></extra>"
+        ))
+        # 신뢰구간 (+/- RMSE)
+        fig_fut.add_trace(go.Scatter(
+            x=pd.concat([future_df["일자"], future_df["일자"].iloc[::-1]]),
+            y=pd.concat([future_df["예측인입수"] + metrics["RMSE"],
+                         (future_df["예측인입수"] - metrics["RMSE"]).iloc[::-1]]),
+            fill="toself", fillcolor=hex_rgba(COLORS["danger"], 0.08),
+            line=dict(color="rgba(0,0,0,0)"), name=f"±RMSE 신뢰구간",
+            hoverinfo="skip"
+        ))
+        lo2 = base_layout(380, "")
+        lo2["legend"] = dict(orientation="h", y=1.08, x=0, font=dict(size=11))
+        fig_fut.update_layout(**lo2)
+        st.plotly_chart(fig_fut, use_container_width=True)
+        card_close()
+    with c2:
+        card_open("예측 요약 통계")
+        fut_sum = future_df["예측인입수"]
+        st.markdown(kpi_card("예측 기간 합계", fmt_num(int(fut_sum.sum())), unit="건", accent="blue"), unsafe_allow_html=True)
+        st.markdown(kpi_card("일평균 예측", f"{fut_sum.mean():.0f}", unit="건", accent="green"), unsafe_allow_html=True)
+        st.markdown(kpi_card("최대 예측일", fmt_num(int(fut_sum.max())), unit="건", accent="orange"), unsafe_allow_html=True)
+        st.markdown(kpi_card("최소 예측일", fmt_num(int(fut_sum.min())), unit="건", accent="neutral"), unsafe_allow_html=True)
+        card_close()
+        card_open("예측 상세 테이블")
+        st.dataframe(future_df.rename(columns={"예측인입수": f"예측({ch_sel})"}),
+                     use_container_width=True, height=300)
+        download_csv_button(future_df, f"ml_forecast_{ch_sel}.csv")
+        card_close()
+
+    # ── 피처 중요도 ──────────────────────────────
+    section_title("🔍 피처 중요도 (변수 기여도)")
+    if hasattr(model, "feature_importances_"):
+        fi = pd.DataFrame({
+            "피처":  FEATURE_COLS,
+            "중요도": model.feature_importances_
+        }).sort_values("중요도", ascending=False)
+
+        feat_labels_kr = {
+            "요일":"요일", "월":"월", "주차":"주차", "공휴일여부":"공휴일여부", "주말여부":"주말여부",
+            "lag1":"전일 인입(lag1)", "lag7":"7일전(lag7)", "lag14":"14일전(lag14)",
+            "roll7_mean":"7일 롤링평균", "roll7_std":"7일 롤링표준편차", "roll14_mean":"14일 롤링평균"
+        }
+        fi["피처명"] = fi["피처"].map(feat_labels_kr).fillna(fi["피처"])
+
+        card_open("피처 중요도", "값이 클수록 예측에 더 많이 기여하는 변수")
+        fig_fi = px.bar(fi, x="중요도", y="피처명", orientation="h",
+                        color="중요도",
+                        color_continuous_scale=["#e0e7ff", "#6366f1", "#3730a3"])
+        fig_fi.update_layout(**base_layout(320, ""))
+        fig_fi.update_traces(marker_line_width=0)
+        fig_fi.update_coloraxes(showscale=False)
+        st.plotly_chart(fig_fi, use_container_width=True)
+        card_close()
+
+    elif hasattr(model, "named_steps"):
+        # Ridge의 경우 계수
+        coef = model.named_steps["ridge"].coef_
+        fi2 = pd.DataFrame({"피처": FEATURE_COLS, "계수(절댓값)": np.abs(coef)}).sort_values("계수(절댓값)", ascending=False)
+        card_open("Ridge 회귀 계수 (절댓값)")
+        fig_fi2 = px.bar(fi2, x="계수(절댓값)", y="피처", orientation="h",
+                         color_discrete_sequence=[COLORS["info"]])
+        fig_fi2.update_layout(**base_layout(280, ""))
+        fig_fi2.update_traces(marker_line_width=0)
+        st.plotly_chart(fig_fi2, use_container_width=True)
+        card_close()
+
+    # ── TimeSeriesSplit CV 결과 ──────────────────
+    section_title("📉 교차검증 (TimeSeriesSplit × 5)")
+    try:
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_maes = []
+        for tr_idx, te_idx in tscv.split(X):
+            _m, _p, _met = _train_and_evaluate(X[tr_idx], y[tr_idx], X[te_idx], y[te_idx], model_sel)
+            cv_maes.append(_met["MAE"])
+        cv_df = pd.DataFrame({
+            "Fold": [f"Fold {i+1}" for i in range(len(cv_maes))],
+            "MAE": [round(v, 1) for v in cv_maes]
+        })
+        card_open("Cross-Validation MAE (시계열 분할)", f"평균 MAE: {np.mean(cv_maes):.1f}건 / 표준편차: {np.std(cv_maes):.1f}건")
+        fig_cv = px.bar(cv_df, x="Fold", y="MAE",
+                        color_discrete_sequence=[COLORS["primary"]])
+        fig_cv.add_hline(y=np.mean(cv_maes), line_dash="dash",
+                         line_color=COLORS["danger"],
+                         annotation_text=f"평균 MAE: {np.mean(cv_maes):.1f}",
+                         annotation_font=dict(size=11, color=COLORS["danger"]))
+        fig_cv.update_layout(**base_layout(240, ""))
+        fig_cv.update_traces(marker_line_width=0)
+        st.plotly_chart(fig_cv, use_container_width=True)
+        card_close()
+    except Exception as e:
+        st.info(f"교차검증 실패: {e}")
+
+
+# ══════════════════════════════════════════════
+# ★ ML-2: 운영성 예측 모델
+# ══════════════════════════════════════════════
+def page_ml_ops_predict(phone, chat, board):
+    if not SKLEARN_OK:
+        st.error("scikit-learn이 설치되지 않았습니다.")
+        return
+
+    st.markdown("""
+    <div class="dash-header">
+      <div class="dash-header-left">
+        <h1>⚙️ 운영성 예측 모델</h1>
+        <span>AHT·미응대율·SLA 위반율 등 핵심 운영지표를 ML로 예측·설명</span>
+      </div>
+      <span class="dash-badge primary">scikit-learn</span>
+    </div>""", unsafe_allow_html=True)
+
+    tab_aht, tab_miss, tab_sla = st.tabs(["🕐 AHT 예측", "📵 미응대율 예측", "🚨 SLA 위반 예측"])
+
+    # ══════════════════════════════════════════════
+    # Tab 1: AHT 예측 (전화)
+    # ══════════════════════════════════════════════
+    with tab_aht:
+        section_title("전화 AHT 예측 — 상담사별 / 요일·시간대별 회귀 모델")
+        st.markdown("""
+        <div class="alert-card info">
+          <span class="alert-icon">ℹ️</span>
+          <span>요일·시간대·공휴일여부·근속그룹·팀명 등을 피처로 사용하여 상담 AHT를 예측합니다.
+          모델 결과는 <b>AHT 영향 인자 파악</b> 및 <b>신규 상담사 배치 계획</b>에 활용할 수 있습니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        if phone.empty or "AHT(초)" not in phone.columns:
+            st.info("전화 AHT 데이터가 없습니다.")
+        else:
+            ph_resp = phone[phone["응대여부"] == "응대"].copy()
+            ph_resp = ph_resp[~ph_resp["상담사명"].isin(EXCLUDE_AGENTS)] if "상담사명" in ph_resp.columns else ph_resp
+            ph_resp = ph_resp[ph_resp["AHT(초)"] > 0]
+
+            if ph_resp.empty or len(ph_resp) < 30:
+                st.info("응대 데이터가 충분하지 않습니다.")
+            else:
+                feat_rows = []
+                time_col = "인입시각"
+                for _, row in ph_resp.iterrows():
+                    r = {}
+                    if time_col in ph_resp.columns and pd.notna(row.get(time_col)):
+                        dt = pd.Timestamp(row[time_col])
+                        r["요일"]       = dt.dayofweek
+                        r["시간대"]     = dt.hour
+                        r["월"]         = dt.month
+                        r["공휴일여부"] = int(dt.date() in KR_HOLIDAYS)
+                        r["주말여부"]   = int(dt.dayofweek >= 5)
+                    else:
+                        r["요일"] = r["시간대"] = r["월"] = r["공휴일여부"] = r["주말여부"] = 0
+
+                    # 근속그룹 → 순서 인코딩
+                    tenure_order = {l: i for i, (_, l) in enumerate(TENURE_GROUPS)}
+                    r["근속그룹코드"] = tenure_order.get(row.get("근속그룹", ""), 0) if "근속그룹" in ph_resp.columns else 0
+
+                    # 팀명 → label encoding
+                    if "팀명" in ph_resp.columns:
+                        teams = ph_resp["팀명"].dropna().unique().tolist()
+                        r["팀코드"] = teams.index(row["팀명"]) if row.get("팀명") in teams else -1
+                    else:
+                        r["팀코드"] = 0
+
+                    r["AHT(초)"] = float(row["AHT(초)"])
+                    feat_rows.append(r)
+
+                feat_df = pd.DataFrame(feat_rows).dropna()
+                aht_feats = ["요일", "시간대", "월", "공휴일여부", "주말여부", "근속그룹코드", "팀코드"]
+                Xa = feat_df[aht_feats].values
+                ya = feat_df["AHT(초)"].values
+
+                split_a = int(len(feat_df) * 0.8)
+                Xa_tr, Xa_te = Xa[:split_a], Xa[split_a:]
+                ya_tr, ya_te = ya[:split_a], ya[split_a:]
+
+                aht_model_sel = st.selectbox("AHT 예측 모델", ["Random Forest", "Gradient Boosting", "Ridge"], key="ops_aht_model")
+
+                if len(Xa_tr) >= 10:
+                    aht_model, aht_pred, aht_met = _train_and_evaluate(Xa_tr, ya_tr, Xa_te, ya_te, aht_model_sel)
+
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1: st.markdown(kpi_card("MAE", f"{aht_met['MAE']:.0f}", unit="초"), unsafe_allow_html=True)
+                    with c2: st.markdown(kpi_card("RMSE", f"{aht_met['RMSE']:.0f}", unit="초"), unsafe_allow_html=True)
+                    with c3: st.markdown(kpi_card("R²", f"{aht_met['R²']:.3f}", accent="green" if aht_met['R²'] > 0.5 else "orange"), unsafe_allow_html=True)
+                    with c4: st.markdown(kpi_card("MAPE", f"{aht_met['MAPE(%)']:.1f}", unit="%"), unsafe_allow_html=True)
+
+                    # 실제 vs 예측 산점도
+                    card_open("실제 AHT vs 예측 AHT (테스트 샘플)")
+                    fig_scatter = go.Figure()
+                    sample_n = min(500, len(ya_te))
+                    idx_s = np.random.choice(len(ya_te), sample_n, replace=False)
+                    fig_scatter.add_trace(go.Scatter(
+                        x=ya_te[idx_s], y=aht_pred[idx_s],
+                        mode="markers",
+                        marker=dict(color=COLORS["primary"], size=4, opacity=0.5),
+                        hovertemplate="실제: %{x:.0f}초<br>예측: %{y:.0f}초<extra></extra>",
+                        name="데이터"
+                    ))
+                    max_v = max(ya_te.max(), aht_pred.max()) * 1.05
+                    fig_scatter.add_trace(go.Scatter(
+                        x=[0, max_v], y=[0, max_v],
+                        mode="lines", line=dict(color=COLORS["danger"], dash="dash", width=1.5),
+                        name="완벽 예측선", hoverinfo="skip"
+                    ))
+                    lo_s = base_layout(380, "")
+                    lo_s["xaxis"]["title"] = dict(text="실제 AHT(초)", font=dict(size=11))
+                    lo_s["yaxis"]["title"] = dict(text="예측 AHT(초)", font=dict(size=11))
+                    fig_scatter.update_layout(**lo_s)
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    card_close()
+
+                    # 피처 중요도
+                    if hasattr(aht_model, "feature_importances_"):
+                        fi_a = pd.DataFrame({
+                            "피처": ["요일", "시간대", "월", "공휴일여부", "주말여부", "근속그룹코드", "팀코드"],
+                            "중요도": aht_model.feature_importances_
+                        }).sort_values("중요도", ascending=False)
+                        card_open("AHT 영향 인자 (피처 중요도)")
+                        fig_fi_a = px.bar(fi_a, x="중요도", y="피처", orientation="h",
+                                          color="중요도",
+                                          color_continuous_scale=["#d1fae5", "#22c55e", "#15803d"])
+                        fig_fi_a.update_layout(**base_layout(280, ""))
+                        fig_fi_a.update_traces(marker_line_width=0)
+                        fig_fi_a.update_coloraxes(showscale=False)
+                        st.plotly_chart(fig_fi_a, use_container_width=True)
+                        card_close()
+
+                    # 시간대별 예측 AHT 히트맵
+                    section_title("시간대 × 요일별 예측 AHT 히트맵")
+                    hm_rows = []
+                    for dow in range(7):
+                        for hr in range(WORK_START, WORK_END):
+                            tenure_code = 5  # 기존 상담사 기준
+                            team_code   = 0
+                            is_hol = 0
+                            feat_hm = np.array([[dow, hr, 6, is_hol, int(dow >= 5), tenure_code, team_code]])
+                            pred_aht = max(0, float(aht_model.predict(feat_hm)[0]))
+                            hm_rows.append({"요일": ["월","화","수","목","금","토","일"][dow], "시간대": hr, "예측AHT(초)": pred_aht})
+                    hm_df = pd.DataFrame(hm_rows)
+                    piv_hm = hm_df.pivot_table(index="요일", columns="시간대", values="예측AHT(초)")
+                    piv_hm = piv_hm.reindex(["월","화","수","목","금","토","일"])
+                    card_open("기존 상담사 기준 예측 AHT 히트맵 (요일 × 시간대)")
+                    fig_hm = go.Figure(go.Heatmap(
+                        z=piv_hm.values, x=piv_hm.columns.astype(str), y=piv_hm.index,
+                        colorscale=[[0,"#f0fdf4"],[0.5,"#f59e0b"],[1.0,"#b91c1c"]],
+                        showscale=True,
+                        colorbar=dict(title=dict(text="AHT(초)", font=dict(size=11)), thickness=10, len=0.8),
+                        hovertemplate="요일: <b>%{y}</b><br>시간대: <b>%{x}시</b><br>예측AHT: <b>%{z:.0f}초</b><extra></extra>"
+                    ))
+                    fig_hm.update_layout(**base_layout(340, ""))
+                    st.plotly_chart(fig_hm, use_container_width=True)
+                    card_close()
+
+    # ══════════════════════════════════════════════
+    # Tab 2: 미응대율 예측
+    # ══════════════════════════════════════════════
+    with tab_miss:
+        section_title("채널별 시간대 미응대율 예측")
+        st.markdown("""
+        <div class="alert-card info">
+          <span class="alert-icon">ℹ️</span>
+          <span>시간대·요일·인입량·현재 응대율 기반으로 <b>미응대율</b>을 예측합니다.
+          미응대 위험 시간대를 사전에 파악하여 선제적 인력 배치에 활용하세요.</span>
+        </div>""", unsafe_allow_html=True)
+
+        miss_ch_sel = st.selectbox("채널", ["전화", "채팅"], key="ops_miss_ch")
+        df_miss = phone if miss_ch_sel == "전화" else chat
+        tcol_miss = "인입시각" if miss_ch_sel == "전화" else "접수일시"
+
+        if df_miss.empty or tcol_miss not in df_miss.columns or "응대여부" not in df_miss.columns:
+            st.info("데이터가 없습니다.")
+        else:
+            tmp_m = df_miss.copy()
+            tmp_m["_dt"] = pd.to_datetime(tmp_m[tcol_miss], errors="coerce")
+            tmp_m = tmp_m[tmp_m["_dt"].notna()]
+            tmp_m["요일"]   = tmp_m["_dt"].dt.dayofweek
+            tmp_m["시간대"] = tmp_m["_dt"].dt.hour
+            tmp_m["월"]     = tmp_m["_dt"].dt.month
+            tmp_m["일자"]   = tmp_m["_dt"].dt.date
+            tmp_m["미응대"] = (tmp_m["응대여부"] == "미응대").astype(int)
+
+            # 버킷 집계: 시간대별 미응대율
+            grp_m = tmp_m.groupby(["일자", "요일", "시간대", "월"]).agg(
+                전체건수=("미응대", "count"),
+                미응대수=("미응대", "sum")
+            ).reset_index()
+            grp_m["미응대율"] = grp_m["미응대수"] / grp_m["전체건수"]
+            grp_m = grp_m[grp_m["전체건수"] >= 3]  # 소량 버킷 제외
+
+            if len(grp_m) < 20:
+                st.info("집계 버킷이 충분하지 않습니다.")
+            else:
+                Xm = grp_m[["요일", "시간대", "월", "전체건수"]].values
+                ym = grp_m["미응대율"].values
+
+                split_m = int(len(grp_m) * 0.8)
+                Xm_tr, Xm_te = Xm[:split_m], Xm[split_m:]
+                ym_tr, ym_te = ym[:split_m], ym[split_m:]
+
+                miss_model_sel = st.selectbox("미응대율 예측 모델", ["Random Forest", "Gradient Boosting"], key="ops_miss_model")
+                miss_model, miss_pred, miss_met = _train_and_evaluate(Xm_tr, ym_tr * 100, Xm_te, ym_te * 100, miss_model_sel)
+
+                c1, c2, c3 = st.columns(3)
+                with c1: st.markdown(kpi_card("MAE", f"{miss_met['MAE']:.1f}", unit="%p"), unsafe_allow_html=True)
+                with c2: st.markdown(kpi_card("R²", f"{miss_met['R²']:.3f}", accent="green" if miss_met['R²'] > 0.5 else "orange"), unsafe_allow_html=True)
+                with c3: st.markdown(kpi_card("MAPE", f"{miss_met['MAPE(%)']:.1f}", unit="%"), unsafe_allow_html=True)
+
+                # 위험 시간대 히트맵
+                section_title("⚠️ 미응대 위험 시간대 히트맵 (예측)")
+                risk_rows = []
+                for dow in range(7):
+                    for hr in range(WORK_START, WORK_END):
+                        avg_vol = grp_m[(grp_m["요일"] == dow) & (grp_m["시간대"] == hr)]["전체건수"].mean()
+                        avg_vol = avg_vol if not np.isnan(avg_vol) else grp_m["전체건수"].mean()
+                        feat_r = np.array([[dow, hr, 6, avg_vol]])
+                        pred_miss = min(100, max(0, float(miss_model.predict(feat_r)[0])))
+                        risk_rows.append({"요일": ["월","화","수","목","금","토","일"][dow], "시간대": hr, "예측미응대율(%)": pred_miss})
+
+                risk_df  = pd.DataFrame(risk_rows)
+                piv_risk = risk_df.pivot_table(index="요일", columns="시간대", values="예측미응대율(%)")
+                piv_risk = piv_risk.reindex(["월","화","수","목","금","토","일"])
+
+                card_open(f"{miss_ch_sel} 미응대 위험 히트맵 (요일 × 시간대, 예측 기준)")
+                fig_risk = go.Figure(go.Heatmap(
+                    z=piv_risk.values, x=piv_risk.columns.astype(str), y=piv_risk.index,
+                    colorscale=[[0,"#f0fdf4"],[0.4,"#fef3c7"],[0.7,"#fca5a5"],[1.0,"#b91c1c"]],
+                    showscale=True,
+                    colorbar=dict(title=dict(text="미응대율(%)", font=dict(size=11)), thickness=10, len=0.8),
+                    hovertemplate="요일: <b>%{y}</b><br>시간대: <b>%{x}시</b><br>예측 미응대율: <b>%{z:.1f}%</b><extra></extra>"
+                ))
+                lo_r = base_layout(340, "")
+                lo_r["xaxis"]["title"] = dict(text="시간대", font=dict(size=11))
+                fig_risk.update_layout(**lo_r)
+                st.plotly_chart(fig_risk, use_container_width=True)
+                card_close()
+
+                # 고위험 시간대 요약
+                section_title("🚨 고위험 시간대 순위 (예측 미응대율 기준)")
+                risk_top = risk_df.sort_values("예측미응대율(%)", ascending=False).head(10).reset_index(drop=True)
+                risk_top["위험등급"] = risk_top["예측미응대율(%)"].apply(
+                    lambda x: "🔴 HIGH" if x > 30 else ("🟡 MED" if x > 15 else "🟢 LOW")
+                )
+                card_open("예측 고위험 시간대 Top 10")
+                st.dataframe(risk_top, use_container_width=True, height=300)
+                download_csv_button(risk_top, f"risk_heatmap_{miss_ch_sel}.csv")
+                card_close()
+
+    # ══════════════════════════════════════════════
+    # Tab 3: SLA 위반 예측
+    # ══════════════════════════════════════════════
+    with tab_sla:
+        section_title("채팅 SLA 위반 예측 (120초 초과 대기 여부)")
+        st.markdown("""
+        <div class="alert-card warning">
+          <span class="alert-icon">⚠️</span>
+          <span>채팅 응답시간 120초 초과 여부(SLA 위반)를 이진 분류로 예측합니다.
+          <b>예측 확률이 높은 시간대에 상담사를 미리 배치</b>하면 SLA 달성률을 향상시킬 수 있습니다.</span>
+        </div>""", unsafe_allow_html=True)
+
+        if chat.empty or "응답시간(초)" not in chat.columns or "접수일시" not in chat.columns:
+            st.info("채팅 데이터 또는 응답시간 컬럼이 없습니다.")
+        else:
+            ch_sla = chat[chat["응대여부"] == "응대"].copy()
+            ch_sla["_dt"] = pd.to_datetime(ch_sla["접수일시"], errors="coerce")
+            ch_sla = ch_sla[ch_sla["_dt"].notna() & (ch_sla["응답시간(초)"] > 0)]
+
+            if len(ch_sla) < 50:
+                st.info("데이터가 충분하지 않습니다.")
+            else:
+                ch_sla["SLA위반"] = (ch_sla["응답시간(초)"] > SLA_CHAT_WAIT).astype(int)
+                ch_sla["요일"]    = ch_sla["_dt"].dt.dayofweek
+                ch_sla["시간대"]  = ch_sla["_dt"].dt.hour
+                ch_sla["월"]      = ch_sla["_dt"].dt.month
+
+                # 시간대별 집계 → 위반율 예측 (회귀)
+                grp_sla = ch_sla.groupby(["요일", "시간대", "월"]).agg(
+                    건수=("SLA위반", "count"),
+                    위반수=("SLA위반", "sum")
+                ).reset_index()
+                grp_sla["위반율"] = grp_sla["위반수"] / grp_sla["건수"]
+                grp_sla = grp_sla[grp_sla["건수"] >= 3]
+
+                if len(grp_sla) < 15:
+                    st.info("SLA 집계 버킷이 충분하지 않습니다.")
+                else:
+                    Xs = grp_sla[["요일", "시간대", "월", "건수"]].values
+                    ys = grp_sla["위반율"].values * 100
+
+                    split_s = int(len(grp_sla) * 0.8)
+                    Xs_tr, Xs_te = Xs[:split_s], Xs[split_s:]
+                    ys_tr, ys_te = ys[:split_s], ys[split_s:]
+
+                    sla_model, sla_pred, sla_met = _train_and_evaluate(Xs_tr, ys_tr, Xs_te, ys_te, "Random Forest")
+
+                    c1, c2, c3 = st.columns(3)
+                    with c1: st.markdown(kpi_card("MAE", f"{sla_met['MAE']:.1f}", unit="%p"), unsafe_allow_html=True)
+                    with c2: st.markdown(kpi_card("R²", f"{sla_met['R²']:.3f}", accent="green" if sla_met['R²'] > 0.5 else "orange"), unsafe_allow_html=True)
+                    with c3:
+                        overall_viol = ch_sla["SLA위반"].mean() * 100
+                        st.markdown(kpi_card("실제 전체 위반율", f"{overall_viol:.1f}", unit="%", accent="red"), unsafe_allow_html=True)
+
+                    # 예측 위반율 히트맵
+                    sla_risk_rows = []
+                    for dow in range(7):
+                        for hr in range(WORK_START, WORK_END):
+                            avg_cnt = grp_sla[(grp_sla["요일"]==dow)&(grp_sla["시간대"]==hr)]["건수"].mean()
+                            avg_cnt = avg_cnt if not np.isnan(avg_cnt) else grp_sla["건수"].mean()
+                            feat_sv = np.array([[dow, hr, 6, avg_cnt]])
+                            pred_v  = min(100, max(0, float(sla_model.predict(feat_sv)[0])))
+                            sla_risk_rows.append({"요일": ["월","화","수","목","금","토","일"][dow], "시간대": hr, "예측위반율(%)": pred_v})
+
+                    sla_risk_df  = pd.DataFrame(sla_risk_rows)
+                    piv_sla_risk = sla_risk_df.pivot_table(index="요일", columns="시간대", values="예측위반율(%)")
+                    piv_sla_risk = piv_sla_risk.reindex(["월","화","수","목","금","토","일"])
+
+                    card_open("채팅 SLA 위반율 예측 히트맵 (요일 × 시간대)")
+                    fig_sla_h = go.Figure(go.Heatmap(
+                        z=piv_sla_risk.values, x=piv_sla_risk.columns.astype(str), y=piv_sla_risk.index,
+                        colorscale=[[0,"#eff6ff"],[0.3,"#93c5fd"],[0.7,"#ef4444"],[1.0,"#7f1d1d"]],
+                        showscale=True,
+                        colorbar=dict(title=dict(text="위반율(%)", font=dict(size=11)), thickness=10, len=0.8),
+                        hovertemplate="요일: <b>%{y}</b><br>시간대: <b>%{x}시</b><br>예측 위반율: <b>%{z:.1f}%</b><extra></extra>"
+                    ))
+                    fig_sla_h.update_layout(**base_layout(340, ""))
+                    st.plotly_chart(fig_sla_h, use_container_width=True)
+                    card_close()
+
+                    # SLA 임계 초과 예상 시간대 경보
+                    threshold_pct = st.slider("SLA 위반 경보 임계값 (%)", 10, 80, 30, 5, key="sla_thresh")
+                    warn_times = sla_risk_df[sla_risk_df["예측위반율(%)"] >= threshold_pct].sort_values("예측위반율(%)", ascending=False)
+                    if not warn_times.empty:
+                        st.markdown(f"""
+                        <div class="alert-card danger">
+                          <span class="alert-icon">🚨</span>
+                          <span><b>{len(warn_times)}개</b> 시간대에서 SLA 위반율이 <b>{threshold_pct}%</b> 이상으로 예측됩니다. 해당 시간대에 추가 인력 배치를 검토하세요.</span>
+                        </div>""", unsafe_allow_html=True)
+                        card_open("SLA 위반 경보 시간대")
+                        st.dataframe(warn_times.reset_index(drop=True), use_container_width=True, height=280)
+                        card_close()
+
+
+# ══════════════════════════════════════════════
+# ★ ML-3: 상담사 역량 클러스터링
+# ══════════════════════════════════════════════
+def page_agent_cluster(phone, chat, board):
+    if not SKLEARN_OK:
+        st.error("scikit-learn이 설치되지 않았습니다.")
+        return
+
+    st.markdown("""
+    <div class="dash-header">
+      <div class="dash-header-left">
+        <h1>👥 상담사 역량 클러스터</h1>
+        <span>K-Means 클러스터링으로 상담사를 역량 그룹으로 분류하고 육성 방향을 도출</span>
+      </div>
+      <span class="dash-badge primary">K-Means · PCA</span>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="alert-card info">
+      <span class="alert-icon">🧩</span>
+      <span>응대율·AHT·처리건수·미응대율을 종합하여 상담사를 <b>K-Means 클러스터</b>로 분류합니다.
+      PCA 2D 시각화로 그룹별 분포를 확인하고, 각 클러스터별 육성 전략을 수립하세요.</span>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 상담사별 지표 집계 ─────────────────────
+    agent_stats = {}
+
+    if not phone.empty and "상담사명" in phone.columns:
+        ph_all = phone[~phone["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+        for ag, grp in ph_all.groupby("상담사명"):
+            resp = grp[grp["응대여부"] == "응대"]
+            if ag not in agent_stats:
+                agent_stats[ag] = {}
+            agent_stats[ag]["전화건수"]    = len(grp)
+            agent_stats[ag]["전화응대율"]  = len(resp) / len(grp) * 100 if len(grp) > 0 else 0
+            agent_stats[ag]["전화AHT"]     = float(resp["AHT(초)"].mean()) if not resp.empty and "AHT(초)" in resp.columns else 0
+
+    if not chat.empty and "상담사명" in chat.columns:
+        ch_all = chat[~chat["상담사명"].isin(EXCLUDE_AGENTS)].copy()
+        for ag, grp in ch_all.groupby("상담사명"):
+            resp = grp[grp["응대여부"] == "응대"]
+            if ag not in agent_stats:
+                agent_stats[ag] = {}
+            agent_stats[ag]["채팅건수"]    = len(grp)
+            agent_stats[ag]["채팅응대율"]  = len(resp) / len(grp) * 100 if len(grp) > 0 else 0
+            agent_stats[ag]["채팅대기시간"] = float(resp["응답시간(초)"].mean()) if not resp.empty and "응답시간(초)" in resp.columns else 0
+
+    if not agent_stats:
+        st.info("상담사 데이터가 없습니다.")
+        return
+
+    agg_df = pd.DataFrame(agent_stats).T.fillna(0).reset_index()
+    agg_df.columns = [c if c != "index" else "상담사명" for c in agg_df.columns]
+    if "상담사명" not in agg_df.columns:
+        agg_df = agg_df.rename(columns={agg_df.columns[0]: "상담사명"})
+
+    # 피처 선택
+    cluster_feats = [c for c in ["전화건수","전화응대율","전화AHT","채팅건수","채팅응대율","채팅대기시간"] if c in agg_df.columns]
+    if len(cluster_feats) < 2:
+        st.info("클러스터링에 필요한 피처가 부족합니다.")
+        return
+
+    agg_df_clean = agg_df[agg_df[cluster_feats].sum(axis=1) > 0].copy()
+    if len(agg_df_clean) < 5:
+        st.info("클러스터링할 상담사가 5명 미만입니다.")
+        return
+
+    Xc = agg_df_clean[cluster_feats].values
+    scaler_c = StandardScaler()
+    Xc_scaled = scaler_c.fit_transform(Xc)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        n_clusters = st.slider("클러스터 수 (K)", 2, min(8, len(agg_df_clean)//3), 3, 1, key="clust_k")
+    with c2:
+        cluster_method = st.selectbox("시각화 방식", ["PCA 2D", "지표별 레이더"], key="clust_viz")
+
+    # K-Means 클러스터링
+    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    labels = km.fit_predict(Xc_scaled)
+    agg_df_clean = agg_df_clean.copy()
+    agg_df_clean["클러스터"] = labels
+
+    # 클러스터별 레이블 자동 명명
+    cluster_means = agg_df_clean.groupby("클러스터")[cluster_feats].mean()
+    cluster_labels_map = {}
+    for cl_id in range(n_clusters):
+        row = cluster_means.loc[cl_id]
+        resp_score = row.get("전화응대율", 0) + row.get("채팅응대율", 0)
+        vol_score  = row.get("전화건수", 0) + row.get("채팅건수", 0)
+        aht_score  = row.get("전화AHT", 0)
+        if resp_score > cluster_means[["전화응대율"] if "전화응대율" in cluster_feats else cluster_feats[:1]].values.mean() * 1.2:
+            if vol_score > cluster_means[["전화건수"] if "전화건수" in cluster_feats else cluster_feats[:1]].values.mean():
+                lbl = f"C{cl_id+1}: 고성과 핵심"
+            else:
+                lbl = f"C{cl_id+1}: 안정형"
+        elif aht_score > cluster_means[["전화AHT"] if "전화AHT" in cluster_feats else cluster_feats[:1]].values.mean() * 1.2 if "전화AHT" in cluster_feats else True:
+            lbl = f"C{cl_id+1}: 장시간형 (육성 필요)"
+        else:
+            lbl = f"C{cl_id+1}: 신규/성장형"
+        cluster_labels_map[cl_id] = lbl
+
+    agg_df_clean["클러스터명"] = agg_df_clean["클러스터"].map(cluster_labels_map)
+
+    # ── KPI ──────────────────────────────────────
+    section_title("클러스터별 상담사 분포")
+    dist = agg_df_clean.groupby("클러스터명").size().reset_index(name="인원수")
+    cols_dist = st.columns(n_clusters)
+    for i, (_, row) in enumerate(dist.iterrows()):
+        with cols_dist[i % len(cols_dist)]:
+            pct = row["인원수"] / len(agg_df_clean) * 100
+            st.markdown(kpi_card(row["클러스터명"][:10], fmt_num(row["인원수"]), unit=f"명 ({pct:.0f}%)"), unsafe_allow_html=True)
+
+    if cluster_method == "PCA 2D":
+        # PCA 시각화
+        pca = PCA(n_components=2, random_state=42)
+        Xc_pca = pca.fit_transform(Xc_scaled)
+        agg_df_clean["PC1"] = Xc_pca[:, 0]
+        agg_df_clean["PC2"] = Xc_pca[:, 1]
+
+        card_open("PCA 2D 클러스터 분포 (상담사 역량 맵)",
+                  f"PC1: {pca.explained_variance_ratio_[0]*100:.1f}% / PC2: {pca.explained_variance_ratio_[1]*100:.1f}% 설명력")
+        fig_pca = px.scatter(
+            agg_df_clean, x="PC1", y="PC2",
+            color="클러스터명",
+            hover_data=["상담사명"] + cluster_feats[:3],
+            color_discrete_sequence=PALETTE,
+            opacity=0.75
+        )
+        fig_pca.update_traces(marker_size=8)
+        lo_pca = base_layout(480, "")
+        lo_pca["legend"] = dict(orientation="h", y=-0.15, x=0, font=dict(size=11))
+        lo_pca["xaxis"]["title"] = dict(text=f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)", font=dict(size=11))
+        lo_pca["yaxis"]["title"] = dict(text=f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)", font=dict(size=11))
+        fig_pca.update_layout(**lo_pca)
+        st.plotly_chart(fig_pca, use_container_width=True)
+        card_close()
+    else:
+        # 레이더 차트: 클러스터별 평균 지표
+        section_title("클러스터별 역량 레이더 차트")
+        norm_means = cluster_means.copy()
+        for col in cluster_feats:
+            col_max = norm_means[col].max()
+            norm_means[col] = norm_means[col] / col_max * 100 if col_max > 0 else 0
+
+        fig_radar = go.Figure()
+        for cl_id in range(n_clusters):
+            vals = norm_means.loc[cl_id, cluster_feats].tolist()
+            vals += vals[:1]  # 닫기
+            feats_plot = cluster_feats + [cluster_feats[0]]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=vals, theta=feats_plot,
+                fill="toself", name=cluster_labels_map[cl_id],
+                line=dict(color=PALETTE[cl_id % len(PALETTE)]),
+                fillcolor=hex_rgba(PALETTE[cl_id % len(PALETTE)], 0.12)
+            ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+            showlegend=True,
+            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+            height=460, margin=dict(t=30, b=40, l=40, r=40),
+            legend=dict(font=dict(size=11))
+        )
+        card_open("클러스터별 역량 레이더")
+        st.plotly_chart(fig_radar, use_container_width=True)
+        card_close()
+
+    # ── 클러스터별 평균 지표 테이블 ─────────────
+    section_title("클러스터별 평균 지표")
+    summary_df = agg_df_clean.groupby("클러스터명")[cluster_feats].mean().round(1).reset_index()
+    summary_df["인원수"] = agg_df_clean.groupby("클러스터명").size().values
+    card_open("클러스터 요약 테이블")
+    st.dataframe(summary_df, use_container_width=True)
+    card_close()
+
+    # ── 클러스터별 상담사 목록 ────────────────────
+    section_title("클러스터별 상담사 목록")
+    for cl_name, grp in agg_df_clean.groupby("클러스터명"):
+        with st.expander(f"📋 {cl_name} — {len(grp)}명"):
+            disp = grp[["상담사명"] + cluster_feats].round(1).reset_index(drop=True)
+            st.dataframe(disp, use_container_width=True)
+            download_csv_button(disp, f"cluster_{cl_name[:6].replace(' ','_')}.csv")
+
+    # ── Elbow 분석 ───────────────────────────────
+    section_title("📐 Elbow 분석 (최적 K 선정)")
+    max_k = min(10, len(agg_df_clean) // 2)
+    if max_k >= 3:
+        inertias = []
+        k_range  = range(2, max_k + 1)
+        for k in k_range:
+            km_e = KMeans(n_clusters=k, random_state=42, n_init=10)
+            km_e.fit(Xc_scaled)
+            inertias.append(km_e.inertia_)
+        card_open("Elbow Curve (Inertia vs K)", "꺾이는 지점(elbow)이 최적 K입니다")
+        fig_elbow = go.Figure(go.Scatter(
+            x=list(k_range), y=inertias,
+            mode="lines+markers",
+            line=dict(color=COLORS["primary"], width=2.5),
+            marker=dict(size=8, color="#fff", line=dict(color=COLORS["primary"], width=2)),
+            hovertemplate="K=%{x}<br>Inertia: %{y:,.0f}<extra></extra>"
+        ))
+        fig_elbow.add_vline(
+            x=n_clusters, line=dict(color=COLORS["danger"], dash="dash", width=1.5),
+            annotation_text=f"현재 K={n_clusters}",
+            annotation_font=dict(size=11, color=COLORS["danger"])
+        )
+        lo_e = base_layout(260, "")
+        lo_e["xaxis"]["title"] = dict(text="K (클러스터 수)", font=dict(size=11))
+        lo_e["yaxis"]["title"] = dict(text="Inertia", font=dict(size=11))
+        fig_elbow.update_layout(**lo_e)
+        st.plotly_chart(fig_elbow, use_container_width=True)
+        card_close()
 
 
 if __name__ == "__main__":
