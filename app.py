@@ -92,6 +92,12 @@ section[data-testid="stSidebar"] {
     left: 0 !important;
 }
 section[data-testid="stSidebar"] > div:first-child { padding-top: 0 !important; }
+section[data-testid="stSidebar"] .stRadio { margin-bottom: 0 !important; }
+section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
+section[data-testid="stSidebar"] .stSlider { padding-top: 0 !important; margin-bottom: 2px !important; }
+section[data-testid="stSidebar"] .stDateInput { margin-bottom: 2px !important; }
+section[data-testid="stSidebar"] .stMultiSelect { margin-bottom: 2px !important; }
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 2px !important; }
 section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
 section[data-testid="stSidebar"] > div { display: block !important; visibility: visible !important; width: 240px !important; }
 [data-testid="collapsedControl"] {
@@ -115,24 +121,11 @@ section[data-testid="stSidebar"] .stButton > button {
 section[data-testid="stSidebar"] .stButton > button:hover {
     background: rgba(99,102,241,0.15) !important; color: #fff !important;
 }
-/* ── 사이드바 그룹 헤더 ── */
-.sidebar-group-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 7px 10px 7px 8px; margin: 2px 0;
-    border-radius: 7px; cursor: pointer;
-    font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em;
-    color: rgba(148,163,184,0.75);
-    text-transform: uppercase;
-    transition: background 150ms ease, color 150ms ease;
-    user-select: none;
-}
-.sidebar-group-header:hover { background: rgba(255,255,255,0.04); color: #e2e8f0; }
-.sidebar-group-header.open   { color: #c7d2fe; }
 /* ── 그룹 토글 버튼 — 헤더 스타일 ── */
 section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[kind="secondary"]) button {
-    padding: 6px 8px !important;
-    height: 30px !important;
-    font-size: 10.5px !important;
+    padding: 4px 8px !important;
+    height: 26px !important;
+    font-size: 10px !important;
     font-weight: 700 !important;
     letter-spacing: 0.04em !important;
     text-transform: uppercase !important;
@@ -147,7 +140,6 @@ section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[kind="secon
     color: #e2e8f0 !important;
     border: none !important;
 }
-/* ── 메뉴 아이템 버튼 ── */
 section[data-testid="stSidebar"] .stButton > button {
     background: transparent !important;
     border: 1px solid transparent !important;
@@ -155,9 +147,9 @@ section[data-testid="stSidebar"] .stButton > button {
     color: #94a3b8 !important;
     width: 100% !important;
     text-align: left !important;
-    padding: 0 10px !important;
-    height: 32px !important;
-    font-size: 12.5px !important;
+    padding: 0 8px !important;
+    height: 28px !important;
+    font-size: 12px !important;
     font-weight: 500 !important;
     margin-bottom: 1px !important;
     transition: all 130ms cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -1253,6 +1245,122 @@ def page_overview(phone, chat, board, unit, month_range, start, end,
     fig2.update_layout(**lo)
     st.plotly_chart(fig2, use_container_width=True)
     card_close()
+
+    # ── 문의유형별 ATT / ACW ───────────────────────────────────
+    section_title("문의유형별 ATT · ACW")
+
+    def _aht_by_type(df, att_col, acw_col, type_cols):
+        """문의유형(대분류/중분류) 별 평균 ATT, ACW 집계"""
+        if df.empty:
+            return pd.DataFrame()
+        # 사용 가능한 분류 컬럼 탐색
+        cat_col = None
+        for c in type_cols:
+            if c in df.columns:
+                cat_col = c
+                break
+        if cat_col is None:
+            return pd.DataFrame()
+        rows = []
+        for col in [att_col, acw_col]:
+            if col not in df.columns:
+                df[col] = 0.0
+            df = ensure_seconds_col(df, col)
+        resp = df[df["응대여부"] == "응대"] if "응대여부" in df.columns else df
+        if resp.empty:
+            return pd.DataFrame()
+        g = resp.groupby(cat_col).agg(
+            건수=(cat_col, "count"),
+            ATT=(att_col, "mean"),
+            ACW=(acw_col, "mean"),
+        ).reset_index()
+        g["AHT"]  = g["ATT"] + g["ACW"]
+        g = g.sort_values("건수", ascending=False).head(15)
+        g.rename(columns={cat_col: "유형"}, inplace=True)
+        return g
+
+    # 탭: 전화 / 채팅
+    tab_ph_aht, tab_ch_aht = st.tabs(["📞 전화 ATT/ACW", "💬 채팅 ATT/ACW"])
+
+    with tab_ph_aht:
+        ph_aht = _aht_by_type(
+            phone.copy() if not phone.empty else pd.DataFrame(),
+            att_col="통화시간(초)", acw_col="ACW시간(초)",
+            type_cols=["대분류","중분류","소분류"]
+        )
+        if ph_aht.empty:
+            st.info("전화 데이터 또는 문의유형 컬럼이 없습니다.")
+        else:
+            card_open("문의유형별 ATT/ACW (전화)", "응대 건수 기준 상위 15개 유형")
+            # 바 차트: 유형별 ATT/ACW 스택
+            fig_ph_aht = go.Figure()
+            fig_ph_aht.add_trace(go.Bar(
+                x=ph_aht["유형"], y=ph_aht["ATT"],
+                name="ATT (통화시간)",
+                marker_color=COLORS["phone"], marker_line_width=0,
+                hovertemplate="<b>%{x}</b><br>ATT: %{customdata}<extra></extra>",
+                customdata=[fmt_hms(v) for v in ph_aht["ATT"]]
+            ))
+            fig_ph_aht.add_trace(go.Bar(
+                x=ph_aht["유형"], y=ph_aht["ACW"],
+                name="ACW (후처리)",
+                marker_color=COLORS["warning"], marker_line_width=0,
+                hovertemplate="<b>%{x}</b><br>ACW: %{customdata}<extra></extra>",
+                customdata=[fmt_hms(v) for v in ph_aht["ACW"]]
+            ))
+            lo_aht = base_layout(320, "")
+            lo_aht["barmode"] = "stack"
+            lo_aht["yaxis"]["title"] = "초(sec)"
+            fig_ph_aht.update_layout(**lo_aht)
+            st.plotly_chart(fig_ph_aht, use_container_width=True)
+
+            # 테이블 요약
+            disp = ph_aht.copy()
+            disp["ATT"]  = disp["ATT"].apply(fmt_hms)
+            disp["ACW"]  = disp["ACW"].apply(fmt_hms)
+            disp["AHT"]  = disp["AHT"].apply(fmt_hms)
+            disp["건수"] = disp["건수"].apply(fmt_num)
+            st.dataframe(disp[["유형","건수","ATT","ACW","AHT"]], use_container_width=True, height=240)
+            card_close()
+
+    with tab_ch_aht:
+        ch_aht = _aht_by_type(
+            chat.copy() if not chat.empty else pd.DataFrame(),
+            att_col="통화시간(초)", acw_col="ACW시간(초)",
+            type_cols=["대분류","중분류","소분류"]
+        )
+        if ch_aht.empty:
+            st.info("채팅 데이터 또는 문의유형 컬럼이 없습니다.")
+        else:
+            card_open("문의유형별 ATT/ACW (채팅)", "응대 건수 기준 상위 15개 유형")
+            fig_ch_aht = go.Figure()
+            fig_ch_aht.add_trace(go.Bar(
+                x=ch_aht["유형"], y=ch_aht["ATT"],
+                name="ATT (상담시간)",
+                marker_color=COLORS["chat"], marker_line_width=0,
+                hovertemplate="<b>%{x}</b><br>ATT: %{customdata}<extra></extra>",
+                customdata=[fmt_hms(v) for v in ch_aht["ATT"]]
+            ))
+            fig_ch_aht.add_trace(go.Bar(
+                x=ch_aht["유형"], y=ch_aht["ACW"],
+                name="ACW (후처리)",
+                marker_color=COLORS["warning"], marker_line_width=0,
+                hovertemplate="<b>%{x}</b><br>ACW: %{customdata}<extra></extra>",
+                customdata=[fmt_hms(v) for v in ch_aht["ACW"]]
+            ))
+            lo_aht2 = base_layout(320, "")
+            lo_aht2["barmode"] = "stack"
+            lo_aht2["yaxis"]["title"] = "초(sec)"
+            fig_ch_aht.update_layout(**lo_aht2)
+            st.plotly_chart(fig_ch_aht, use_container_width=True)
+
+            disp2 = ch_aht.copy()
+            disp2["ATT"]  = disp2["ATT"].apply(fmt_hms)
+            disp2["ACW"]  = disp2["ACW"].apply(fmt_hms)
+            disp2["AHT"]  = disp2["AHT"].apply(fmt_hms)
+            disp2["건수"] = disp2["건수"].apply(fmt_num)
+            st.dataframe(disp2[["유형","건수","ATT","ACW","AHT"]], use_container_width=True, height=240)
+            card_close()
 
 def page_voc(phone, chat, board, unit, month_range, start, end):
     section_title("VOC 인입 분석")
@@ -5036,28 +5144,19 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
     with st.sidebar:
         # ── 로고 헤더 ──────────────────────────
         st.markdown("""
-        <div style="
-            padding: 20px 16px 14px;
-            border-bottom: 1px solid rgba(255,255,255,0.07);
-            margin-bottom: 10px;
-        ">
-            <div style="font-size:15px;font-weight:800;color:#fff;letter-spacing:-0.03em;
-            margin-bottom:2px;">CC OPS</div>
-            <div style="font-size:10px;color:rgba(148,163,184,0.7);
-            font-weight:500;letter-spacing:0.01em;">Contact Center Analytics</div>
+        <div style="padding:14px 14px 10px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:6px;">
+            <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.03em;margin-bottom:1px;">CC OPS</div>
+            <div style="font-size:9.5px;color:rgba(148,163,184,0.65);font-weight:500;">Contact Center Analytics</div>
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("데이터 새로고침", key="btn_refresh"):
+        if st.button("🔄 새로고침", key="btn_refresh"):
             st.cache_data.clear()
             st.rerun()
 
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
         # ── 기간 단위 ──────────────────────────
-        st.markdown("""<div style="font-size:10px;font-weight:700;
-        color:rgba(148,163,184,0.55);text-transform:uppercase;
-        letter-spacing:0.07em;margin-bottom:5px;margin-top:6px;">기간 단위</div>""",
+        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
+        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 3px;">기간 단위</div>""",
         unsafe_allow_html=True)
         unit = st.radio("기간 단위", ["일별","주별","월별"],
                         horizontal=True, label_visibility="collapsed")
@@ -5065,45 +5164,99 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
         if unit == "월별":
             month_range = st.slider("추이 범위(개월)", 1, 6, 3)
 
-        # ── 날짜 빠른 선택 ─────────────────────
-        st.markdown("""<div style="margin-top:12px;font-size:10px;font-weight:700;
-        color:rgba(148,163,184,0.55);text-transform:uppercase;
-        letter-spacing:0.07em;margin-bottom:6px;">날짜 빠른 선택</div>""",
+        # ── 날짜 선택 ─────────────────────────
+        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
+        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 4px;">날짜 선택</div>""",
         unsafe_allow_html=True)
-        today = date.today()
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("7일",    key="d7"):
-                st.session_state["ds"] = today - timedelta(days=6)
-                st.session_state["de"] = today
-        with c2:
-            if st.button("30일",   key="d30"):
-                st.session_state["ds"] = today - timedelta(days=29)
-                st.session_state["de"] = today
-        c3, c4 = st.columns(2)
-        with c3:
-            if st.button("이번달", key="dmonth"):
-                st.session_state["ds"] = today.replace(day=1)
-                st.session_state["de"] = today
-        with c4:
-            if st.button("전체",   key="dall"):
-                st.session_state["ds"] = date(2024, 1, 1)
-                st.session_state["de"] = today
 
-        date_start = st.date_input("시작일",
-            value=st.session_state.get("ds", today - timedelta(days=29)), key="date_start")
-        date_end   = st.date_input("종료일",
-            value=st.session_state.get("de", today), key="date_end")
+        today = date.today()
+
+        # 초기값
+        if "ds" not in st.session_state:
+            st.session_state["ds"] = today - timedelta(days=29)
+        if "de" not in st.session_state:
+            st.session_state["de"] = today
+
+        # 빠른 선택 버튼 (2x3 그리드)
+        _q_cols = st.columns(3)
+        _quick = [("7일", today-timedelta(days=6), today),
+                  ("30일", today-timedelta(days=29), today),
+                  ("이번달", today.replace(day=1), today),
+                  ("지난달", (today.replace(day=1)-timedelta(days=1)).replace(day=1),
+                             today.replace(day=1)-timedelta(days=1)),
+                  ("90일", today-timedelta(days=89), today),
+                  ("전체", date(2024,1,1), today)]
+        for i, (label, ds_, de_) in enumerate(_quick):
+            with _q_cols[i % 3]:
+                if st.button(label, key=f"quick_{label}", use_container_width=True):
+                    st.session_state["ds"] = ds_
+                    st.session_state["de"] = de_
+                    st.rerun()
+
+        # 달력 선택 모드 토글
+        _cal_mode = st.session_state.get("cal_mode", "range")
+        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.5);margin:5px 0 2px;
+        display:flex;gap:6px;align-items:center;">
+        <span>선택 방식</span></div>""", unsafe_allow_html=True)
+        _m_cols = st.columns(2)
+        with _m_cols[0]:
+            if st.button("📅 기간", key="mode_range",
+                         help="시작~종료 날짜 범위 선택",
+                         use_container_width=True):
+                st.session_state["cal_mode"] = "range"
+                st.rerun()
+        with _m_cols[1]:
+            if st.button("📆 단일", key="mode_single",
+                         help="특정 하루만 선택",
+                         use_container_width=True):
+                st.session_state["cal_mode"] = "single"
+                st.rerun()
+
+        _cal_mode = st.session_state.get("cal_mode", "range")
+
+        if _cal_mode == "single":
+            # 단일 날짜 달력 선택
+            st.markdown("""<div style="font-size:9px;color:rgba(99,102,241,0.9);
+            font-weight:600;margin:3px 0;">📆 단일 날짜 선택</div>""", unsafe_allow_html=True)
+            _single_date = st.date_input(
+                "날짜",
+                value=st.session_state.get("ds", today),
+                label_visibility="collapsed",
+                key="cal_single"
+            )
+            date_start = _single_date
+            date_end   = _single_date
+            st.session_state["ds"] = date_start
+            st.session_state["de"] = date_end
+        else:
+            # 기간 선택 (시작~종료)
+            st.markdown("""<div style="font-size:9px;color:rgba(99,102,241,0.9);
+            font-weight:600;margin:3px 0;">📅 기간 선택</div>""", unsafe_allow_html=True)
+            date_start = st.date_input(
+                "시작일",
+                value=st.session_state.get("ds", today - timedelta(days=29)),
+                key="date_start"
+            )
+            date_end = st.date_input(
+                "종료일",
+                value=st.session_state.get("de", today),
+                key="date_end"
+            )
+            # date_input 변경 시 session_state 동기화
+            st.session_state["ds"] = date_start
+            st.session_state["de"] = date_end
 
         # ── 필터 ───────────────────────────────
+        st.markdown("""<div style="font-size:9.5px;font-weight:700;color:rgba(148,163,184,0.5);
+        text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 3px;">필터</div>""",
+        unsafe_allow_html=True)
+
         all_ops = sorted(set(
             list(phone_raw["사업자명"].dropna().unique() if "사업자명" in phone_raw.columns else []) +
             list(chat_raw["사업자명"].dropna().unique()  if "사업자명" in chat_raw.columns  else []) +
             list(board_raw["사업자명"].dropna().unique() if "사업자명" in board_raw.columns else [])
         ))
-        st.markdown("""<div style="margin-top:12px;font-size:10px;font-weight:700;
-        color:rgba(148,163,184,0.55);text-transform:uppercase;
-        letter-spacing:0.07em;margin-bottom:4px;">사업자 필터</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.45);margin-bottom:2px;">사업자</div>""", unsafe_allow_html=True)
         sel_ops = st.multiselect("사업자", all_ops, default=[],
                                  label_visibility="collapsed", key="sel_ops")
 
@@ -5112,19 +5265,16 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
             list(chat_raw["브랜드"].dropna().unique()  if "브랜드" in chat_raw.columns  else []) +
             list(board_raw["브랜드"].dropna().unique() if "브랜드" in board_raw.columns else [])
         ))
-        st.markdown("""<div style="margin-top:8px;font-size:10px;font-weight:700;
-        color:rgba(148,163,184,0.55);text-transform:uppercase;
-        letter-spacing:0.07em;margin-bottom:4px;">브랜드 필터</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="font-size:9px;color:rgba(148,163,184,0.45);margin-bottom:2px;margin-top:3px;">브랜드</div>""", unsafe_allow_html=True)
         sel_brands = st.multiselect("브랜드", all_brands, default=[],
                                     label_visibility="collapsed", key="sel_brands")
 
-        st.markdown("""<div style="margin-top:14px;padding-top:12px;
+        st.markdown("""<div style="margin-top:8px;padding-top:8px;
         border-top:1px solid rgba(255,255,255,0.07);"></div>""", unsafe_allow_html=True)
 
         # ── 아코디언 메뉴 ─────────────────────
         menu = st.session_state.get("menu", "전체 현황")
 
-        # 어느 그룹이 열려있는지 (기본: 현재 메뉴가 속한 그룹 + 대시보드)
         def find_group(m):
             for g, items in MENU_GROUPS.items():
                 if m in items:
@@ -5134,31 +5284,19 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
         active_group = find_group(menu)
 
         for group, items in MENU_GROUPS.items():
-            # 이 그룹이 열려야 하는지
             grp_key = f"grp_open_{group}"
-            # 초기값: 현재 메뉴가 속한 그룹은 열림
             if grp_key not in st.session_state:
                 st.session_state[grp_key] = (group == active_group)
 
             is_open = st.session_state[grp_key]
             chevron = "▾" if is_open else "▸"
-            open_cls = "open" if is_open else ""
 
-            # 그룹 헤더 (클릭으로 토글)
-            st.markdown(
-                f"""<div class="sidebar-group-header {open_cls}"
-                    style="display:flex;align-items:center;justify-content:space-between;
-                    padding:7px 8px;margin:3px 0;border-radius:6px;cursor:default;
-                    font-size:10.5px;font-weight:700;letter-spacing:0.04em;
-                    color:{'#c7d2fe' if is_open else 'rgba(148,163,184,0.6)'};
-                    text-transform:uppercase;">
-                    <span>{group}</span><span style="font-size:11px;">{chevron}</span>
-                </div>""",
-                unsafe_allow_html=True
-            )
-            if st.button(f"{'▾' if is_open else '▸'} {group}",
-                          key=f"grp_btn_{group}",
-                          help=f"{group} 메뉴 {'접기' if is_open else '펼치기'}"):
+            # 그룹 헤더 버튼
+            if st.button(
+                f"{chevron} {group}",
+                key=f"grp_btn_{group}",
+                help=f"{group} 메뉴 {'접기' if is_open else '펼치기'}"
+            ):
                 st.session_state[grp_key] = not is_open
                 st.rerun()
 
@@ -5166,20 +5304,17 @@ def render_sidebar(phone_raw, chat_raw, board_raw):
                 for item in items:
                     is_active = (menu == item)
                     wrap_cls  = "sidebar-active" if is_active else ""
-                    st.markdown(f"""<div class='{wrap_cls}' style='margin-left:8px;'>""",
+                    st.markdown(f"""<div class='{wrap_cls}' style='margin-left:6px;'>""",
                                 unsafe_allow_html=True)
                     if st.button(item, key=f"m_{item}"):
                         st.session_state["menu"] = item
-                        # 이 아이템의 그룹 열기
                         for g, its in MENU_GROUPS.items():
                             if item in its:
                                 st.session_state[f"grp_open_{g}"] = True
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)
 
     return unit, month_range, date_start, date_end, sel_ops, sel_brands
 
