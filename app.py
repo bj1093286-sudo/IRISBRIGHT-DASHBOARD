@@ -199,7 +199,6 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     border-color: #4f46e5 !important;
     color: #ffffff !important;
 }
-section[data-testid="stSidebar"] .stRadio label { font-size: 13px !important; font-weight: 500 !important; color: #cbd5e1 !important; }
 section[data-testid="stSidebar"] .stDateInput input {
     background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.1) !important;
     border-radius: 6px !important; color: #e2e8f0 !important; font-size: 13px !important;
@@ -1272,121 +1271,142 @@ def page_overview(phone, chat, board, unit, month_range, start, end,
     st.plotly_chart(fig2, use_container_width=True)
     card_close()
 
-    # ── 문의유형별 ATT / ACW ───────────────────────────────────
-    section_title("문의유형별 ATT · ACW")
+    # ── 문의유형별 ATT / ACW / SLA ──────────────────────────────
+    section_title("문의유형별 ATT · ACW · 대기")
 
-    def _aht_by_type(df, att_col, acw_col, type_cols):
-        """문의유형(대분류/중분류) 별 평균 ATT, ACW 집계"""
-        if df.empty:
-            return pd.DataFrame()
-        # 사용 가능한 분류 컬럼 탐색
-        cat_col = None
-        for c in type_cols:
-            if c in df.columns:
-                cat_col = c
-                break
-        if cat_col is None:
-            return pd.DataFrame()
-        rows = []
-        for col in [att_col, acw_col]:
-            if col not in df.columns:
-                df[col] = 0.0
-            df = ensure_seconds_col(df, col)
-        resp = df[df["응대여부"] == "응대"] if "응대여부" in df.columns else df
-        if resp.empty:
-            return pd.DataFrame()
+    def _aht_by_type(df, col1, col2, col1_name, col2_name, type_cols):
+        """문의유형별 col1/col2 평균 집계 → {유형, 건수, col1_name, col2_name, 합계}"""
+        if df.empty: return pd.DataFrame()
+        cat_col = next((c for c in type_cols if c in df.columns), None)
+        if cat_col is None: return pd.DataFrame()
+        resp = df[df["응대여부"] == "응대"].copy() if "응대여부" in df.columns else df.copy()
+        if resp.empty: return pd.DataFrame()
+        for c in [col1, col2]:
+            if c not in resp.columns: resp[c] = 0.0
+            resp = ensure_seconds_col(resp, c)
         g = resp.groupby(cat_col).agg(
             건수=(cat_col, "count"),
-            ATT=(att_col, "mean"),
-            ACW=(acw_col, "mean"),
+            **{col1_name: (col1, "mean")},
+            **{col2_name: (col2, "mean")},
         ).reset_index()
-        g["AHT"]  = g["ATT"] + g["ACW"]
+        g["합계"] = g[col1_name] + g[col2_name]
         g = g.sort_values("건수", ascending=False).head(15)
         g.rename(columns={cat_col: "유형"}, inplace=True)
         return g
 
-    # 탭: 전화 / 채팅
-    tab_ph_aht, tab_ch_aht = st.tabs(["📞 전화 ATT/ACW", "💬 채팅 ATT/ACW"])
+    def _render_aht_tab(df_aht, col1_name, col2_name, c1, c2, title, subtitle):
+        if df_aht.empty:
+            st.info(f"{title} 데이터 또는 문의유형 컬럼이 없습니다.")
+            return
+        card_open(title, subtitle)
+        fig_ = go.Figure()
+        fig_.add_trace(go.Bar(
+            x=df_aht["유형"], y=df_aht[col1_name], name=col1_name,
+            marker_color=c1, marker_line_width=0,
+            hovertemplate=f"<b>%{{x}}</b><br>{col1_name}: %{{customdata}}<extra></extra>",
+            customdata=[fmt_hms(v) for v in df_aht[col1_name]]
+        ))
+        fig_.add_trace(go.Bar(
+            x=df_aht["유형"], y=df_aht[col2_name], name=col2_name,
+            marker_color=c2, marker_line_width=0,
+            hovertemplate=f"<b>%{{x}}</b><br>{col2_name}: %{{customdata}}<extra></extra>",
+            customdata=[fmt_hms(v) for v in df_aht[col2_name]]
+        ))
+        lo_ = base_layout(300, "")
+        lo_["barmode"] = "stack"
+        lo_["yaxis"]["title"] = "초(sec)"
+        fig_.update_layout(**lo_)
+        st.plotly_chart(fig_, use_container_width=True)
+        disp_ = df_aht.copy()
+        disp_[col1_name] = disp_[col1_name].apply(fmt_hms)
+        disp_[col2_name] = disp_[col2_name].apply(fmt_hms)
+        disp_["합계"]    = disp_["합계"].apply(fmt_hms)
+        disp_["건수"]    = disp_["건수"].apply(fmt_num)
+        st.dataframe(disp_[["유형","건수",col1_name,col2_name,"합계"]], use_container_width=True, height=220)
+        card_close()
+
+    _type_cols = ["대분류","중분류","소분류"]
+
+    tab_ph_aht, tab_ch_aht, tab_bo_aht = st.tabs(["📞 전화 ATT/ACW", "💬 채팅 대기/ACW", "📝 게시판 LT"])
 
     with tab_ph_aht:
         ph_aht = _aht_by_type(
             phone.copy() if not phone.empty else pd.DataFrame(),
-            att_col="통화시간(초)", acw_col="ACW시간(초)",
-            type_cols=["대분류","중분류","소분류"]
+            "통화시간(초)", "ACW시간(초)", "ATT(통화)", "ACW(후처리)", _type_cols
         )
-        if ph_aht.empty:
-            st.info("전화 데이터 또는 문의유형 컬럼이 없습니다.")
-        else:
-            card_open("문의유형별 ATT/ACW (전화)", "응대 건수 기준 상위 15개 유형")
-            # 바 차트: 유형별 ATT/ACW 스택
-            fig_ph_aht = go.Figure()
-            fig_ph_aht.add_trace(go.Bar(
-                x=ph_aht["유형"], y=ph_aht["ATT"],
-                name="ATT (통화시간)",
-                marker_color=COLORS["phone"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>ATT: %{customdata}<extra></extra>",
-                customdata=[fmt_hms(v) for v in ph_aht["ATT"]]
-            ))
-            fig_ph_aht.add_trace(go.Bar(
-                x=ph_aht["유형"], y=ph_aht["ACW"],
-                name="ACW (후처리)",
-                marker_color=COLORS["warning"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>ACW: %{customdata}<extra></extra>",
-                customdata=[fmt_hms(v) for v in ph_aht["ACW"]]
-            ))
-            lo_aht = base_layout(320, "")
-            lo_aht["barmode"] = "stack"
-            lo_aht["yaxis"]["title"] = "초(sec)"
-            fig_ph_aht.update_layout(**lo_aht)
-            st.plotly_chart(fig_ph_aht, use_container_width=True)
-
-            # 테이블 요약
-            disp = ph_aht.copy()
-            disp["ATT"]  = disp["ATT"].apply(fmt_hms)
-            disp["ACW"]  = disp["ACW"].apply(fmt_hms)
-            disp["AHT"]  = disp["AHT"].apply(fmt_hms)
-            disp["건수"] = disp["건수"].apply(fmt_num)
-            st.dataframe(disp[["유형","건수","ATT","ACW","AHT"]], use_container_width=True, height=240)
-            card_close()
+        _render_aht_tab(ph_aht, "ATT(통화)", "ACW(후처리)",
+                        COLORS["phone"], COLORS["warning"],
+                        "문의유형별 ATT/ACW (전화)", "전화 응대 기준 상위 15개 유형")
 
     with tab_ch_aht:
+        # 채팅은 SLA = 대기시간(응답시간) + ACW
         ch_aht = _aht_by_type(
             chat.copy() if not chat.empty else pd.DataFrame(),
-            att_col="통화시간(초)", acw_col="ACW시간(초)",
-            type_cols=["대분류","중분류","소분류"]
+            "응답시간(초)", "ACW시간(초)", "대기시간(SLA)", "ACW(후처리)", _type_cols
         )
-        if ch_aht.empty:
-            st.info("채팅 데이터 또는 문의유형 컬럼이 없습니다.")
-        else:
-            card_open("문의유형별 ATT/ACW (채팅)", "응대 건수 기준 상위 15개 유형")
-            fig_ch_aht = go.Figure()
-            fig_ch_aht.add_trace(go.Bar(
-                x=ch_aht["유형"], y=ch_aht["ATT"],
-                name="ATT (상담시간)",
-                marker_color=COLORS["chat"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>ATT: %{customdata}<extra></extra>",
-                customdata=[fmt_hms(v) for v in ch_aht["ATT"]]
-            ))
-            fig_ch_aht.add_trace(go.Bar(
-                x=ch_aht["유형"], y=ch_aht["ACW"],
-                name="ACW (후처리)",
-                marker_color=COLORS["warning"], marker_line_width=0,
-                hovertemplate="<b>%{x}</b><br>ACW: %{customdata}<extra></extra>",
-                customdata=[fmt_hms(v) for v in ch_aht["ACW"]]
-            ))
-            lo_aht2 = base_layout(320, "")
-            lo_aht2["barmode"] = "stack"
-            lo_aht2["yaxis"]["title"] = "초(sec)"
-            fig_ch_aht.update_layout(**lo_aht2)
-            st.plotly_chart(fig_ch_aht, use_container_width=True)
+        _render_aht_tab(ch_aht, "대기시간(SLA)", "ACW(후처리)",
+                        COLORS["chat"], COLORS["warning"],
+                        "문의유형별 대기/ACW (채팅)", "채팅 SLA = 대기시간 기준 | 상위 15개 유형")
 
-            disp2 = ch_aht.copy()
-            disp2["ATT"]  = disp2["ATT"].apply(fmt_hms)
-            disp2["ACW"]  = disp2["ACW"].apply(fmt_hms)
-            disp2["AHT"]  = disp2["AHT"].apply(fmt_hms)
-            disp2["건수"] = disp2["건수"].apply(fmt_num)
-            st.dataframe(disp2[["유형","건수","ATT","ACW","AHT"]], use_container_width=True, height=240)
-            card_close()
+    with tab_bo_aht:
+        # 게시판은 근무내 LT / 근무외 LT
+        _bo = board.copy() if not board.empty else pd.DataFrame()
+        cat_col_bo = next((c for c in _type_cols if c in _bo.columns), None)
+        if _bo.empty or cat_col_bo is None:
+            st.info("게시판 데이터 또는 문의유형 컬럼이 없습니다.")
+        else:
+            _bo_resp = _bo[_bo["응대여부"]=="응대"].copy() if "응대여부" in _bo.columns else _bo.copy()
+            for _c in ["근무내LT(초)","근무외LT(초)","리드타임(초)"]:
+                if _c not in _bo_resp.columns: _bo_resp[_c] = 0.0
+                _bo_resp = ensure_seconds_col(_bo_resp, _c)
+            # 근무내/외 컬럼이 없으면 리드타임으로 대체
+            _has_split = ("근무내LT(초)" in board.columns)
+            if _has_split:
+                _g_bo = _bo_resp.groupby(cat_col_bo).agg(
+                    건수=(cat_col_bo,"count"),
+                    근무내LT=("근무내LT(초)","mean"),
+                    근무외LT=("근무외LT(초)","mean"),
+                ).reset_index()
+                _g_bo["합계"] = _g_bo["근무내LT"] + _g_bo["근무외LT"]
+                _g_bo = _g_bo.sort_values("건수",ascending=False).head(15)
+                _g_bo.rename(columns={cat_col_bo:"유형"},inplace=True)
+                card_open("문의유형별 LT (게시판)", f"근무내 SLA={SLA_BOARD_IN//3600}h / 근무외 SLA={SLA_BOARD_OFF//3600}h")
+                _fig_bo = go.Figure()
+                _fig_bo.add_trace(go.Bar(x=_g_bo["유형"],y=_g_bo["근무내LT"],name="근무내 LT",
+                    marker_color=COLORS["board"],marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>근무내LT: %{customdata}<extra></extra>",
+                    customdata=[fmt_hms(v) for v in _g_bo["근무내LT"]]))
+                _fig_bo.add_trace(go.Bar(x=_g_bo["유형"],y=_g_bo["근무외LT"],name="근무외 LT",
+                    marker_color=COLORS["neutral"],marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>근무외LT: %{customdata}<extra></extra>",
+                    customdata=[fmt_hms(v) for v in _g_bo["근무외LT"]]))
+                _lo_bo = base_layout(300,""); _lo_bo["barmode"]="stack"; _lo_bo["yaxis"]["title"]="초(sec)"
+                _fig_bo.update_layout(**_lo_bo)
+                st.plotly_chart(_fig_bo, use_container_width=True)
+                _disp_bo = _g_bo.copy()
+                for _col in ["근무내LT","근무외LT","합계"]: _disp_bo[_col] = _disp_bo[_col].apply(fmt_hms)
+                _disp_bo["건수"] = _disp_bo["건수"].apply(fmt_num)
+                st.dataframe(_disp_bo[["유형","건수","근무내LT","근무외LT","합계"]], use_container_width=True, height=220)
+                card_close()
+            else:
+                _g_bo2 = _bo_resp.groupby(cat_col_bo).agg(
+                    건수=(cat_col_bo,"count"), LT=("리드타임(초)","mean")
+                ).reset_index()
+                _g_bo2 = _g_bo2.sort_values("건수",ascending=False).head(15)
+                _g_bo2.rename(columns={cat_col_bo:"유형"},inplace=True)
+                card_open("문의유형별 리드타임 (게시판)","상위 15개 유형")
+                _fig_bo2 = go.Figure(go.Bar(x=_g_bo2["유형"],y=_g_bo2["LT"],
+                    marker_color=COLORS["board"],marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>LT: %{customdata}<extra></extra>",
+                    customdata=[fmt_hms(v) for v in _g_bo2["LT"]]))
+                _lo_bo2 = base_layout(300,""); _lo_bo2["yaxis"]["title"]="초(sec)"
+                _fig_bo2.update_layout(**_lo_bo2)
+                st.plotly_chart(_fig_bo2, use_container_width=True)
+                _disp_bo2 = _g_bo2.copy()
+                _disp_bo2["LT"] = _disp_bo2["LT"].apply(fmt_hms)
+                _disp_bo2["건수"] = _disp_bo2["건수"].apply(fmt_num)
+                st.dataframe(_disp_bo2[["유형","건수","LT"]], use_container_width=True, height=220)
+                card_close()
 
 def page_voc(phone, chat, board, unit, month_range, start, end):
     section_title("VOC 인입 분석")
@@ -4159,12 +4179,26 @@ def page_voc_d2(phone, chat, board):
     """VOC 페이지 내 D2 섹션"""
     c1, c2 = st.columns(2)
     with c1:
-        ch_d2 = st.selectbox("채널 선택", ["전화(AHT)","채팅(대기시간)","게시판(LT)"], key="d2_ch")
+        ch_d2 = st.selectbox("채널 선택",
+            ["전화(ATT)","전화(ACW)","전화(AHT)","채팅(대기시간)","게시판(LT)"],
+            key="d2_ch")
     with c2:
         top_n = st.slider("표시 카테고리 수 (대분류 기준)", 3, 15, 8, key="d2_topn")
 
-    if ch_d2 == "전화(AHT)":
+    if ch_d2 == "전화(ATT)":
         df_d2 = phone[phone["응대여부"]=="응대"].copy() if not phone.empty else pd.DataFrame()
+        metric_col = "통화시간(초)"
+        metric_label = "평균 ATT(초)"
+    elif ch_d2 == "전화(ACW)":
+        df_d2 = phone[phone["응대여부"]=="응대"].copy() if not phone.empty else pd.DataFrame()
+        metric_col = "ACW시간(초)"
+        metric_label = "평균 ACW(초)"
+    elif ch_d2 == "전화(AHT)":
+        df_d2 = phone[phone["응대여부"]=="응대"].copy() if not phone.empty else pd.DataFrame()
+        if not df_d2.empty:
+            df_d2 = ensure_seconds_col(df_d2, "통화시간(초)")
+            df_d2 = ensure_seconds_col(df_d2, "ACW시간(초)")
+            df_d2["AHT(초)"] = df_d2["통화시간(초)"] + df_d2["ACW시간(초)"]
         metric_col = "AHT(초)"
         metric_label = "평균 AHT(초)"
     elif ch_d2 == "채팅(대기시간)":
@@ -4182,6 +4216,8 @@ def page_voc_d2(phone, chat, board):
     if metric_col not in df_d2.columns:
         st.info(f"{metric_col} 컬럼이 없습니다.")
         return
+
+    df_d2 = ensure_seconds_col(df_d2, metric_col)
 
     # 상위 N 대분류 추출
     top_cats = df_d2.groupby("대분류").size().nlargest(top_n).index.tolist()
@@ -4214,7 +4250,7 @@ def page_voc_d2(phone, chat, board):
             tickfont=dict(size=10, color="#94a3b8"),
             outlinewidth=0
         ),
-        hovertemplate=f"대분류: <b>%{{y}}</b><br>중분류: <b>%{{x}}</b><br>{metric_label}: <b>%{{z:.0f}}</b><extra></extra>",
+        hovertemplate=f"대분류: <b>%{{y}}</b><br>중분류: <b>%{{x}}</b><br>{metric_label}: <b>%{{z:.0f}}</b>초<extra></extra>",
         text=pivot.values.astype(str),
         texttemplate="%{z:.0f}",
         textfont=dict(size=9, color="#374151"),
